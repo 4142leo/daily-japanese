@@ -241,7 +241,46 @@
 
   :is(button, a, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  /* 密碼閘（軟性門檻，非真正加密——內容仍在頁面原始碼中） */
+  .gate { display: none; }
+  html.locked .wrap { display: none; }
+  html.locked .gate {
+    display: flex; position: fixed; inset: 0; z-index: 100;
+    align-items: center; justify-content: center; padding: 24px; background: var(--bg);
+  }
+  .gate-card {
+    width: 100%; max-width: 320px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 16px; padding: 28px 22px;
+    display: flex; flex-direction: column; gap: 14px; text-align: center;
+  }
+  .gate-emoji { font-size: 40px; }
+  .gate-title { font-size: 18px; font-weight: 700; }
+  .gate-sub { font-size: 13px; color: var(--muted); margin-top: -8px; }
+  .gate input {
+    padding: 12px 14px; border-radius: 10px; border: 1.5px solid var(--line);
+    background: var(--bg); color: var(--ink); font-size: 20px; text-align: center; letter-spacing: .3em;
+  }
+  .gate button {
+    padding: 12px; border-radius: 10px; border: none; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 16px; font-weight: 700;
+  }
+  .gate-err { font-size: 13px; color: var(--bad); min-height: 18px; }
 </style>
+
+<div class="gate" id="gate">
+  <div class="gate-card">
+    <div class="gate-emoji">🔒</div>
+    <div class="gate-title">每日日文 Daily Japanese</div>
+    <div class="gate-sub">請輸入密碼</div>
+    <input id="gatePw" type="password" inputmode="numeric" maxlength="12" autocomplete="off" aria-label="密碼">
+    <button id="gateBtn" type="button">進入</button>
+    <div class="gate-err" id="gateErr"></div>
+  </div>
+</div>
+<script>
+  (function () { try { if (localStorage.getItem('dj_unlocked') === '1') return; } catch (e) {} document.documentElement.classList.add('locked'); })();
+</script>
 
 <div class="wrap">
   <header class="top">
@@ -752,4 +791,24 @@ setMode('solo');
 })();
 
 $('closing').textContent = LESSON.closing;
+
+/* ---------- 密碼閘（軟性門檻） ---------- */
+(function gate() {
+  const PW = '4142';
+  const root = document.documentElement;
+  if (!root.classList.contains('locked')) return;
+  const pw = $('gatePw'), btn = $('gateBtn'), err = $('gateErr');
+  function tryUnlock() {
+    if (pw.value === PW) {
+      try { localStorage.setItem('dj_unlocked', '1'); } catch (e) {}
+      root.classList.remove('locked');
+    } else {
+      err.textContent = '密碼不對，再試一次';
+      pw.value = ''; pw.focus();
+    }
+  }
+  btn.addEventListener('click', tryUnlock);
+  pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
+  pw.focus();
+})();
 </script>
