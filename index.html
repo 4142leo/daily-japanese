@@ -141,6 +141,31 @@
   .ap-mini { padding: 6px 12px; border-radius: 8px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .ap-mini.note { border-color: var(--accent); color: var(--accent); }
 
+  /* 單字複習（字卡） */
+  .reviewbtn { display: block; width: 100%; margin-top: 14px; padding: 12px; border-radius: 10px; border: 1.5px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-size: 15px; font-weight: 700; cursor: pointer; }
+  .revpanel { position: fixed; inset: 0; z-index: 125; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,.55); }
+  .revpanel.show { display: flex; }
+  .revwrap { width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 12px; }
+  .rev-top { display: flex; justify-content: space-between; align-items: center; color: #fff; font-size: 14px; font-weight: 700; }
+  .rev-close { background: transparent; border: none; color: #fff; font-size: 14px; cursor: pointer; }
+  .rev-scope { display: flex; gap: 6px; justify-content: center; }
+  .rev-scope button { padding: 5px 14px; border-radius: 999px; border: 1.5px solid rgba(255,255,255,.4); background: transparent; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .rev-scope button.on { background: #fff; color: var(--ink); border-color: #fff; }
+  .revcard { background: var(--surface); border-radius: 16px; padding: 34px 22px; min-height: 210px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; cursor: pointer; box-shadow: 0 12px 34px rgba(0,0,0,.32); }
+  .rev-lv { font-size: 12px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 2px 10px; }
+  .rev-word { font-size: 34px; font-weight: 800; line-height: 1.3; }
+  .rev-word .rev-reading { font-size: 17px; }
+  .rev-reading { font-size: 18px; color: var(--muted); }
+  .rev-hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .rev-zh { font-size: 24px; font-weight: 700; color: var(--accent); }
+  .rev-ex { font-size: 15px; line-height: 1.9; margin-top: 4px; }
+  .rev-exzh { font-size: 13px; color: var(--muted); }
+  .rev-empty { color: var(--muted); font-size: 15px; line-height: 1.8; }
+  .rev-nav { display: flex; gap: 8px; }
+  .rev-nav button { flex: 1; padding: 12px; border-radius: 10px; border: none; background: var(--surface); color: var(--ink); font-size: 15px; font-weight: 700; cursor: pointer; }
+  .rev-nav .rev-flip { background: var(--accent); color: #fff; flex: 1.3; }
+  .rev-shuffle { background: transparent; border: none; color: #fff; font-size: 13px; cursor: pointer; }
+
   section.card {
     background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
     padding: 20px 18px;
@@ -436,7 +461,7 @@
   <footer class="end">
     <div class="closing" id="closing"></div>
     <div>明天同一時間，同一個網址見 🎌</div>
-    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-09g</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-09h</div>
   </footer>
 </div>
 
@@ -1138,6 +1163,70 @@ async function exportNote(L) {
   }
   panel.addEventListener('click', (e) => { if (e.target === panel) close(); });
   entry.addEventListener('click', openGate);
+})();
+
+/* ---------- 單字複習（字卡：複習學過課程的單字）---------- */
+(function vocabReview() {
+  const card = $('vocabBox').closest('.card');
+  const btn = document.createElement('button');
+  btn.className = 'reviewbtn'; btn.type = 'button'; btn.textContent = '🔁 複習學過的單字';
+  card.appendChild(btn);
+  const panel = document.createElement('div'); panel.className = 'revpanel'; document.body.appendChild(panel);
+  const rubyOf = (s) => esc(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '<ruby>$1<rt>$2</rt></ruby>');
+  let scope = 'all', deck = [], idx = 0, flipped = false;
+
+  function collect(sc) {
+    const out = [], seen = new Set();
+    const levels = sc === 'level' ? [curLevel] : LEVEL_ORDER;
+    levels.forEach(lv => {
+      const list = byLevel[lv]; if (!list || !list.length) return;
+      let prog = 0;
+      try { const p = parseInt(localStorage.getItem('dj_prog_' + lv), 10); if (!isNaN(p)) prog = p; } catch (e) {}
+      if (lv === curLevel) prog = PROGRESS;   // 目前這一級用即時進度
+      for (let i = 0; i <= Math.min(prog, list.length - 1); i++) {
+        (list[i].vocab || []).forEach(v => { const k = v.word + '|' + v.reading; if (!seen.has(k)) { seen.add(k); out.push(v); } });
+      }
+    });
+    return out;
+  }
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function scopeBtns() {
+    return '<button class="' + (scope === 'level' ? 'on' : '') + '" data-sc="level">這一級（' + esc(curLevel) + '）</button>' +
+           '<button class="' + (scope === 'all' ? 'on' : '') + '" data-sc="all">全部學過</button>';
+  }
+  function render() {
+    if (!deck.length) {
+      panel.innerHTML = '<div class="revwrap"><div class="rev-top"><span>單字複習</span><button class="rev-close">✕ 關閉</button></div>' +
+        '<div class="rev-scope">' + scopeBtns() + '</div>' +
+        '<div class="revcard"><div class="rev-empty">這個範圍還沒有學過的單字。<br>先做幾課，或切到「全部學過」。</div></div></div>';
+      wire(); return;
+    }
+    const v = deck[idx];
+    const front = '<div class="rev-lv">' + esc(v.level) + '</div><div class="rev-word">' + esc(v.word) + '</div>' +
+      '<div class="rev-reading">' + esc(v.reading) + '</div><div class="rev-hint">（點卡片看意思）</div>';
+    const back = '<div class="rev-lv">' + esc(v.level) + ' · ' + esc(v.pos) + '</div>' +
+      '<div class="rev-word">' + esc(v.word) + ' <span class="rev-reading">（' + esc(v.reading) + '）</span></div>' +
+      '<div class="rev-zh">' + esc(v.zh) + '</div><div class="rev-ex">' + rubyOf(v.example) + '</div>' +
+      '<div class="rev-exzh">' + esc(v.example_zh) + '</div>';
+    panel.innerHTML = '<div class="revwrap">' +
+      '<div class="rev-top"><span>單字複習 · ' + (idx + 1) + ' / ' + deck.length + '</span><button class="rev-close">✕ 關閉</button></div>' +
+      '<div class="rev-scope">' + scopeBtns() + '</div>' +
+      '<div class="revcard">' + (flipped ? back : front) + '</div>' +
+      '<div class="rev-nav"><button class="rev-prev">‹ 上一張</button><button class="rev-flip">翻面</button><button class="rev-next">下一張 ›</button></div>' +
+      '<div style="text-align:center"><button class="rev-shuffle">🔀 洗牌重來</button></div></div>';
+    wire();
+  }
+  function wire() {
+    panel.querySelector('.rev-close').onclick = () => panel.classList.remove('show');
+    panel.querySelectorAll('[data-sc]').forEach(b => b.onclick = () => { scope = b.dataset.sc; start(); });
+    const c = panel.querySelector('.revcard'); if (c && deck.length) c.onclick = () => { flipped = !flipped; render(); };
+    const pv = panel.querySelector('.rev-prev'); if (pv) pv.onclick = () => { idx = (idx - 1 + deck.length) % deck.length; flipped = false; render(); };
+    const nx = panel.querySelector('.rev-next'); if (nx) nx.onclick = () => { idx = (idx + 1) % deck.length; flipped = false; render(); };
+    const fl = panel.querySelector('.rev-flip'); if (fl) fl.onclick = () => { flipped = !flipped; render(); };
+    const sh = panel.querySelector('.rev-shuffle'); if (sh) sh.onclick = () => { shuffle(deck); idx = 0; flipped = false; render(); };
+  }
+  function start() { deck = shuffle(collect(scope)); idx = 0; flipped = false; render(); }
+  btn.addEventListener('click', () => { scope = 'all'; start(); panel.classList.add('show'); });
 })();
 
 /* ---------- 密碼閘（軟性門檻） ---------- */
