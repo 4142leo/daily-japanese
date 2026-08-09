@@ -146,6 +146,9 @@
     font-size: 14px; color: var(--muted); margin: 0 0 16px;
     padding-left: 10px; border-left: 2px solid var(--line);
   }
+  .sent { border-radius: 4px; transition: background .15s; }
+  .sent.reading { background: var(--mark); box-shadow: 0 0 0 3px var(--mark); }
+  .jp-title .sent.reading { box-shadow: 0 0 0 4px var(--mark); }
   .source {
     font-size: 12.5px; color: var(--muted); margin: 16px 0 0;
     padding-top: 12px; border-top: 1px solid var(--line);
@@ -412,15 +415,26 @@ const plain = (s) => String(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '$1');
     '<span class="chip">🔥 連續 ' + streak + ' 天</span>';
 })();
 
-/* ---------- 閱讀文章 ---------- */
+/* ---------- 閱讀文章（每句包成 .sent 供朗讀高亮）---------- */
+let READ_UNITS = [];  // 朗讀順序：{ si, kana }
 (function article() {
   const a = LESSON.article;
-  $('artTitle').innerHTML = ruby(a.title);
+  const toKana = (s) => String(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '$2');
+  const splitSent = (s) => s.split(/(?<=[。！？])/).map(x => x.trim()).filter(Boolean);
+  let si = 0;
+  const units = [];
+  function wrap(sentJp) {
+    const idx = si++;
+    units.push({ si: idx, kana: toKana(sentJp) });
+    return '<span class="sent" data-si="' + idx + '">' + ruby(sentJp) + '</span>';
+  }
+  $('artTitle').innerHTML = wrap(a.title);            // 標題當第 0 個朗讀單位
   $('artTitleZh').textContent = a.title_zh || '';
   $('artBody').innerHTML = a.paragraphs.map(p =>
-    '<p class="jp">' + ruby(p.jp) + '</p>' +
+    '<p class="jp">' + splitSent(p.jp).map(wrap).join('') + '</p>' +
     '<p class="zh-line tr">' + esc(p.zh) + '</p>'
   ).join('');
+  READ_UNITS = units;
   const s = LESSON.source || {};
   if (s.url) {
     $('artSource').innerHTML = '閱讀素材出處：<a href="' + esc(s.url) + '" target="_blank" rel="noopener">' +
@@ -467,6 +481,8 @@ const speech = (function () {
       speechSynthesis.cancel(); speechSynthesis.speak(u);
       return true;
     },
+    pause() { if (supported) speechSynthesis.pause(); },
+    resume() { if (supported) speechSynthesis.resume(); },
     stop() { if (supported) speechSynthesis.cancel(); }
   };
 })();
@@ -480,23 +496,39 @@ const speech = (function () {
   s.addEventListener('input', () => { const r = parseFloat(s.value); speech.setRate(r); v.textContent = r.toFixed(1) + '×'; });
 })();
 
-/* 整篇朗讀按鈕 */
+/* 整篇朗讀：逐句念、暫停可續播、高亮當前句 */
 (function readAll() {
   const btn = $('ttsBtn');
   if (!speech.supported) { btn.disabled = true; btn.textContent = '🔊 朗讀（此裝置不支援）'; return; }
-  const kana = (s) => String(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '$2'); // 餵假名讀音，發音最準
-  let on = false;
-  const reset = () => { on = false; btn.textContent = '🔊 朗讀'; btn.classList.remove('on'); };
+  let status = 'idle';  // idle | playing | paused
+  function clearHi() { document.querySelectorAll('.sent.reading').forEach(e => e.classList.remove('reading')); }
+  function setBtn() {
+    btn.classList.toggle('on', status !== 'idle');
+    btn.textContent = status === 'playing' ? '⏸ 暫停' : status === 'paused' ? '▶ 繼續' : '🔊 朗讀';
+  }
+  function stopAll() { speech.stop(); clearHi(); status = 'idle'; setBtn(); }
+  function speakFrom(i) {
+    if (i >= READ_UNITS.length) { stopAll(); return; }
+    const u = READ_UNITS[i];
+    clearHi();
+    const el = document.querySelector('.sent[data-si="' + u.si + '"]');
+    if (el) { el.classList.add('reading'); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    speech.speak(u.kana, () => { if (status === 'playing') speakFrom(i + 1); });
+  }
   btn.addEventListener('click', () => {
-    if (on) { speech.stop(); reset(); return; }
-    if (!speech.hasVoice()) {
-      btn.textContent = '🔊 此裝置沒有日語語音'; btn.classList.remove('on');
-      setTimeout(() => { btn.textContent = '🔊 朗讀'; }, 2800); return;
+    if (status === 'idle') {
+      if (!speech.hasVoice()) {
+        btn.textContent = '🔊 此裝置沒有日語語音'; btn.classList.remove('on');
+        setTimeout(setBtn, 2800); return;
+      }
+      status = 'playing'; setBtn(); speakFrom(0);
+    } else if (status === 'playing') {
+      speech.pause(); status = 'paused'; setBtn();       // 暫停：停在原句
+    } else {
+      speech.resume(); status = 'playing'; setBtn();     // 繼續：接著念，不重頭
     }
-    const text = kana(LESSON.article.title) + '。' + LESSON.article.paragraphs.map(p => kana(p.jp)).join('');
-    if (speech.speak(text, reset)) { on = true; btn.textContent = '⏸ 停止'; btn.classList.add('on'); }
   });
-  window.addEventListener('pagehide', () => speech.stop());
+  window.addEventListener('pagehide', stopAll);
 })();
 
 /* ---------- 選取文字：朗讀＋翻譯 ---------- */
@@ -563,6 +595,11 @@ const speech = (function () {
     }
   });
   document.addEventListener('scroll', () => { bar.hidden = true; out.hidden = true; }, { passive: true });
+  // 修 bug：點工具列/結果框以外的任何地方就關掉（取消選取後選單不消失的情況）
+  document.addEventListener('pointerdown', (e) => {
+    if (bar.contains(e.target) || out.contains(e.target)) return;
+    bar.hidden = true; out.hidden = true;
+  });
 })();
 
 /* ---------- 測驗引擎（單人／雙人共用，跨閱讀理解＋複習題組） ---------- */
