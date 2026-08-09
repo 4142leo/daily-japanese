@@ -43,6 +43,9 @@
 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>每日日文 Daily Japanese</title>
 <style>
   :root {
@@ -556,7 +559,7 @@ const speech = (function () {
 /* ---------- 選取文字：朗讀＋翻譯 ---------- */
 (function selectionTools() {
   const bar = document.createElement('div'); bar.className = 'selbar'; bar.hidden = true;
-  bar.innerHTML = '<button type="button" data-a="say">🔊 唸</button><button type="button" data-a="tr">🇹🇼 翻譯</button>';
+  bar.innerHTML = '<button type="button" data-a="say">🔊 唸</button><button type="button" data-a="tr">🈁 翻譯</button><button type="button" data-a="close" aria-label="關閉">✕</button>';
   const out = document.createElement('div'); out.className = 'selout'; out.hidden = true;
   document.body.appendChild(bar); document.body.appendChild(out);
 
@@ -608,7 +611,9 @@ const speech = (function () {
   document.addEventListener('selectionchange', () => { clearTimeout(t); t = setTimeout(update, 200); });
   bar.addEventListener('mousedown', (e) => e.preventDefault());               // 保留選取（桌機）
   bar.addEventListener('click', async (e) => {
-    const b = e.target.closest('button'); if (!b || !curText) return;
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.a === 'close') { bar.hidden = true; out.hidden = true; try { window.getSelection().removeAllRanges(); } catch (_) {} return; }
+    if (!curText) return;
     const text = curText;
     if (b.dataset.a === 'say') {
       bar.hidden = true;                                  // 一按「唸」就收起功能鍵
