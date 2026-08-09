@@ -99,6 +99,10 @@
   }
   .chip.theme { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
   .chip.level { background: var(--accent); border-color: transparent; color: #fff; font-weight: 700; letter-spacing: .04em; }
+  .lessonnav { display: flex; gap: 8px; margin-top: 10px; }
+  .navbtn { padding: 6px 14px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--surface); color: var(--accent); font-size: 13.5px; font-weight: 600; cursor: pointer; }
+  .navbtn:disabled { opacity: .4; cursor: default; color: var(--muted); }
+  .nextbtn { display: inline-block; padding: 12px 30px; border-radius: 10px; border: none; background: var(--accent); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
 
   section.card {
     background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
@@ -129,10 +133,14 @@
   .selbar button:hover { background: rgba(255,255,255,.14); }
   .selout {
     max-width: 300px; background: var(--surface); border: 1px solid var(--line);
-    border-radius: 10px; padding: 10px 12px; font-size: 15px; color: var(--ink);
+    border-radius: 10px; padding: 10px 30px 10px 12px; font-size: 15px; color: var(--ink);
     box-shadow: 0 6px 18px rgba(0,0,0,.22); line-height: 1.6;
   }
   .selout .lbl { font-size: 12px; color: var(--muted); margin-bottom: 4px; word-break: break-all; }
+  .selout-x {
+    position: absolute; top: 4px; right: 6px; border: none; background: transparent;
+    color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; padding: 4px;
+  }
 
   /* 閱讀文章 */
   ruby rt { font-size: .58em; color: var(--muted); font-weight: 400; user-select: none; }
@@ -149,6 +157,14 @@
   .sent { border-radius: 4px; transition: background .15s; }
   .sent.reading { background: var(--mark); box-shadow: 0 0 0 3px var(--mark); }
   .jp-title .sent.reading { box-shadow: 0 0 0 4px var(--mark); }
+  .playsent {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 19px; height: 19px; margin: 0 4px 0 0; padding: 0; vertical-align: middle;
+    border: none; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+    font-size: 9px; line-height: 1; cursor: pointer; flex: none; user-select: none;
+  }
+  .playsent:hover { background: var(--accent); color: #fff; }
+  .playsent:active { transform: scale(.9); }
   .source {
     font-size: 12.5px; color: var(--muted); margin: 16px 0 0;
     padding-top: 12px; border-top: 1px solid var(--line);
@@ -426,7 +442,8 @@ let READ_UNITS = [];  // 朗讀順序：{ si, kana }
   function wrap(sentJp) {
     const idx = si++;
     units.push({ si: idx, kana: toKana(sentJp) });
-    return '<span class="sent" data-si="' + idx + '">' + ruby(sentJp) + '</span>';
+    return '<button class="playsent" type="button" data-si="' + idx + '" aria-label="播放這句" tabindex="-1">▶</button>' +
+           '<span class="sent" data-si="' + idx + '">' + ruby(sentJp) + '</span>';
   }
   $('artTitle').innerHTML = wrap(a.title);            // 標題當第 0 個朗讀單位
   $('artTitleZh').textContent = a.title_zh || '';
@@ -496,39 +513,44 @@ const speech = (function () {
   s.addEventListener('input', () => { const r = parseFloat(s.value); speech.setRate(r); v.textContent = r.toFixed(1) + '×'; });
 })();
 
-/* 整篇朗讀：逐句念、暫停可續播、高亮當前句 */
-(function readAll() {
+/* 朗讀控制器：整篇（逐句念、暫停可續播、高亮）＋單句播放，共用高亮、互不打架 */
+(function reader() {
   const btn = $('ttsBtn');
   if (!speech.supported) { btn.disabled = true; btn.textContent = '🔊 朗讀（此裝置不支援）'; return; }
-  let status = 'idle';  // idle | playing | paused
+  let mode = 'idle';   // idle | full | paused | single
   function clearHi() { document.querySelectorAll('.sent.reading').forEach(e => e.classList.remove('reading')); }
-  function setBtn() {
-    btn.classList.toggle('on', status !== 'idle');
-    btn.textContent = status === 'playing' ? '⏸ 暫停' : status === 'paused' ? '▶ 繼續' : '🔊 朗讀';
-  }
-  function stopAll() { speech.stop(); clearHi(); status = 'idle'; setBtn(); }
-  function speakFrom(i) {
-    if (i >= READ_UNITS.length) { stopAll(); return; }
-    const u = READ_UNITS[i];
+  function hi(si) {
     clearHi();
-    const el = document.querySelector('.sent[data-si="' + u.si + '"]');
+    const el = document.querySelector('.sent[data-si="' + si + '"]');
     if (el) { el.classList.add('reading'); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
-    speech.speak(u.kana, () => { if (status === 'playing') speakFrom(i + 1); });
+  }
+  function syncBtn() {
+    btn.classList.toggle('on', mode === 'full' || mode === 'paused');
+    btn.textContent = mode === 'full' ? '⏸ 暫停' : mode === 'paused' ? '▶ 繼續' : '🔊 朗讀';
+  }
+  function noVoice() { btn.textContent = '🔊 此裝置沒有日語語音'; btn.classList.remove('on'); setTimeout(syncBtn, 2800); }
+  function playFullFrom(i) {
+    if (i >= READ_UNITS.length) { speech.stop(); clearHi(); mode = 'idle'; syncBtn(); return; }
+    mode = 'full'; hi(READ_UNITS[i].si); syncBtn();
+    speech.speak(READ_UNITS[i].kana, () => { if (mode === 'full') playFullFrom(i + 1); });  // 只有仍在整篇模式才續下一句
   }
   btn.addEventListener('click', () => {
-    if (status === 'idle') {
-      if (!speech.hasVoice()) {
-        btn.textContent = '🔊 此裝置沒有日語語音'; btn.classList.remove('on');
-        setTimeout(setBtn, 2800); return;
-      }
-      status = 'playing'; setBtn(); speakFrom(0);
-    } else if (status === 'playing') {
-      speech.pause(); status = 'paused'; setBtn();       // 暫停：停在原句
-    } else {
-      speech.resume(); status = 'playing'; setBtn();     // 繼續：接著念，不重頭
-    }
+    if (mode === 'idle' || mode === 'single') {
+      if (!speech.hasVoice()) { noVoice(); return; }
+      speech.stop(); playFullFrom(0);
+    } else if (mode === 'full') { speech.pause(); mode = 'paused'; syncBtn(); }   // 暫停：停在原句
+    else { speech.resume(); mode = 'full'; syncBtn(); }                            // 繼續：接著念，不重頭
   });
-  window.addEventListener('pagehide', stopAll);
+  // 單句播放：點某句前面的 ▶
+  $('articleCard').addEventListener('click', (e) => {
+    const b = e.target.closest('.playsent'); if (!b) return;
+    if (!speech.hasVoice()) { noVoice(); return; }
+    const si = +b.dataset.si;
+    const u = READ_UNITS.find(x => x.si === si); if (!u) return;
+    mode = 'single'; hi(si); syncBtn();
+    speech.speak(u.kana, () => { if (mode === 'single') { clearHi(); mode = 'idle'; syncBtn(); } });
+  });
+  window.addEventListener('pagehide', () => { speech.stop(); clearHi(); mode = 'idle'; });
 })();
 
 /* ---------- 選取文字：朗讀＋翻譯 ---------- */
@@ -563,10 +585,12 @@ const speech = (function () {
     bar.style.top = (top < window.scrollY + 4 ? window.scrollY + rect.bottom + 8 : top) + 'px';
   }
   function showOut(html) {
-    out.innerHTML = html; out.hidden = false;
-    out.style.top = ((parseFloat(bar.style.top) || 0) + bar.offsetHeight + 6) + 'px';
+    out.innerHTML = '<button type="button" class="selout-x" aria-label="關閉">✕</button>' + html;
+    out.hidden = false;
+    out.style.top = ((parseFloat(bar.style.top) || 0) + 6) + 'px';
     out.style.left = clampLeft(parseFloat(bar.style.left) || 8, out) + 'px';
   }
+  out.addEventListener('click', (e) => { if (e.target.closest('.selout-x')) out.hidden = true; });
   async function translate(text) {
     try {
       const g = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl=zh-TW&dt=t&q=' + encodeURIComponent(text);
@@ -585,13 +609,16 @@ const speech = (function () {
   bar.addEventListener('mousedown', (e) => e.preventDefault());               // 保留選取（桌機）
   bar.addEventListener('click', async (e) => {
     const b = e.target.closest('button'); if (!b || !curText) return;
+    const text = curText;
     if (b.dataset.a === 'say') {
+      bar.hidden = true;                                  // 一按「唸」就收起功能鍵
       if (!speech.hasVoice()) { showOut('（此裝置沒有日語語音，無法朗讀——桌機請用 Edge 或裝日語語音）'); return; }
-      speech.speak(curText);
+      speech.speak(text); out.hidden = true;
     } else {
+      bar.hidden = true;                                  // 收起功能鍵，只留翻譯結果（附 ✕）
       showOut('翻譯中…');
-      const zh = await translate(curText);
-      showOut('<div class="lbl">' + esc(curText) + '</div><div>' + esc(zh) + '</div>');
+      const zh = await translate(text);
+      showOut('<div class="lbl">' + esc(text) + '</div><div>' + esc(zh) + '</div>');
     }
   });
   document.addEventListener('scroll', () => { bar.hidden = true; out.hidden = true; }, { passive: true });
