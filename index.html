@@ -104,6 +104,35 @@
   .navbtn { padding: 6px 14px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--surface); color: var(--accent); font-size: 13.5px; font-weight: 600; cursor: pointer; }
   .navbtn:disabled { opacity: .4; cursor: default; color: var(--muted); }
   .nextbtn { display: inline-block; padding: 12px 30px; border-radius: 10px; border: none; background: var(--accent); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
+  .notebtn { display: inline-block; padding: 11px 22px; border-radius: 10px; border: 1.5px solid var(--accent); background: var(--surface); color: var(--accent); font-size: 15px; font-weight: 700; cursor: pointer; }
+  .notebtn.block { display: block; width: 100%; margin-top: 14px; }
+  .notepanel { position: fixed; inset: 0; z-index: 120; display: none; align-items: center; justify-content: center; padding: 24px; background: rgba(0,0,0,.45); }
+  .notepanel.show { display: flex; }
+  .notepanel-card { width: 100%; max-width: 360px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px 20px; display: flex; flex-direction: column; gap: 12px; text-align: center; }
+  .notepanel-card .np-title { font-size: 17px; font-weight: 700; }
+  .notepanel-card .np-msg { font-size: 14px; color: var(--muted); line-height: 1.7; }
+  .notepanel-card a.np-obs { padding: 11px; border-radius: 10px; background: var(--accent); color: #fff; font-size: 15px; font-weight: 700; text-decoration: none; }
+  .np-x { padding: 11px; border-radius: 10px; background: var(--bg); color: var(--ink); border: 1.5px solid var(--line); font-size: 15px; font-weight: 700; cursor: pointer; }
+
+  /* 管理控制面板（管理員密碼，情侶端看不到） */
+  .adminentry { margin-top: 14px; background: transparent; border: none; color: var(--muted); font-size: 12px; opacity: .5; cursor: pointer; }
+  .adminentry:hover { opacity: 1; color: var(--accent); }
+  .adminpanel { position: fixed; inset: 0; z-index: 130; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,.5); }
+  .adminpanel.show { display: flex; }
+  .adminpanel-card { width: 100%; max-width: 340px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px 20px; display: flex; flex-direction: column; gap: 12px; }
+  .adminpanel-card.wide { max-width: 460px; max-height: 82vh; }
+  .ap-title { font-size: 18px; font-weight: 700; text-align: center; }
+  .ap-sub { font-size: 13px; color: var(--muted); line-height: 1.6; }
+  .adminpanel-card input { padding: 12px 14px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--bg); color: var(--ink); font-size: 16px; }
+  .ap-err { font-size: 13px; color: var(--bad); min-height: 16px; text-align: center; }
+  .ap-go { padding: 12px; border-radius: 10px; border: none; background: var(--accent); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; }
+  .ap-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  .ap-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; flex-wrap: wrap; }
+  .ap-info { font-size: 14px; flex: 1; min-width: 150px; }
+  .ap-cur { font-size: 11px; color: var(--good); font-weight: 700; }
+  .ap-acts { display: flex; gap: 6px; }
+  .ap-mini { padding: 6px 12px; border-radius: 8px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .ap-mini.note { border-color: var(--accent); color: var(--accent); }
 
   section.card {
     background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
@@ -399,7 +428,7 @@
   <footer class="end">
     <div class="closing" id="closing"></div>
     <div>明天同一時間，同一個網址見 🎌</div>
-    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-09e</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-09f</div>
   </footer>
 </div>
 
@@ -980,6 +1009,103 @@ setMode('solo');
 })();
 
 $('closing').textContent = LESSON.closing;
+
+/* ---------- 整理成 Obsidian 筆記（把某一課轉成 markdown）---------- */
+const OBS_VAULT = 'Obsidian Vault';   // 你的 Obsidian vault 名稱（obsidian:// 用）
+const noteKanji = (s) => String(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '$1（$2）');
+function lessonNoteMarkdown(L, num) {
+  let md = '---\ntags:\n  - 自主學習/日文\n---\n\n';
+  md += '# 日文第 ' + num + ' 課 · ' + (L.article.title_zh || '') + '（' + L.level + '）\n\n';
+  if (L.source && L.source.url) md += '> 閱讀素材出處：Todaii Japanese ' + L.source.url + '\n\n';
+  md += '## 📖 課文\n\n';
+  L.article.paragraphs.forEach(p => { md += noteKanji(p.jp) + '\n（' + p.zh + '）\n\n'; });
+  md += '## 🔤 單字\n\n| 單字 | 讀音 | 詞性 | JLPT | 意思 |\n|---|---|---|---|---|\n';
+  L.vocab.forEach(v => { md += '| ' + v.word + ' | ' + v.reading + ' | ' + v.pos + ' | ' + v.level + ' | ' + v.zh + ' |\n'; });
+  md += '\n## 📝 文法\n\n';
+  L.grammar.forEach(g => {
+    md += '### ' + noteKanji(g.name) + '\n' + noteKanji(g.rule) + '\n\n';
+    g.examples.forEach(ex => { md += '- ' + noteKanji(ex.jp) + ' — ' + ex.zh + '\n'; });
+    md += '- ⚠️ ' + noteKanji(g.mistake) + '\n\n';
+  });
+  return md;
+}
+let notePanelEl = null;
+function showNotePanel(copied, uri) {
+  if (!notePanelEl) { notePanelEl = document.createElement('div'); notePanelEl.className = 'notepanel'; document.body.appendChild(notePanelEl); }
+  notePanelEl.innerHTML =
+    '<div class="notepanel-card">' +
+      '<div class="np-title">📥 整理成 Obsidian 筆記</div>' +
+      '<div class="np-msg">' + (copied ? '筆記已複製到剪貼簿 ✅<br>到 Obsidian 新增一則筆記貼上即可。' : '請點下方連結用 Obsidian 建立。') + '</div>' +
+      '<a class="np-obs" href="' + uri + '">用 Obsidian 直接建立</a>' +
+      '<button class="np-x" type="button">關閉</button>' +
+    '</div>';
+  notePanelEl.classList.add('show');
+  notePanelEl.querySelector('.np-x').onclick = () => notePanelEl.classList.remove('show');
+  notePanelEl.onclick = (e) => { if (e.target === notePanelEl) notePanelEl.classList.remove('show'); };
+}
+async function exportNote(idx) {
+  const L = LESSONS[idx]; if (!L) return;
+  const md = lessonNoteMarkdown(L, idx + 1);
+  let copied = false;
+  try { await navigator.clipboard.writeText(md); copied = true; } catch (e) {}
+  const title = '日文第' + (idx + 1) + '課 ' + (L.article.title_zh || '');
+  const uri = 'obsidian://new?vault=' + encodeURIComponent(OBS_VAULT) + '&name=' + encodeURIComponent(title) + '&content=' + encodeURIComponent(md);
+  showNotePanel(copied, uri);
+}
+
+/* ---------- 管理控制面板（管理員密碼，情侶端看不到）---------- */
+(function adminPanel() {
+  const ADMIN_PW = 'Ee112360112';
+  const entry = document.createElement('button');
+  entry.className = 'adminentry'; entry.type = 'button'; entry.textContent = '⚙️ 管理';
+  document.querySelector('footer.end').appendChild(entry);
+
+  const panel = document.createElement('div'); panel.className = 'adminpanel';
+  document.body.appendChild(panel);
+  const close = () => panel.classList.remove('show');
+
+  function openGate() {
+    panel.innerHTML =
+      '<div class="adminpanel-card">' +
+        '<div class="ap-title">🔐 管理員登入</div>' +
+        '<input id="apPw" type="password" placeholder="管理員密碼" aria-label="管理員密碼" autocomplete="off">' +
+        '<div class="ap-err" id="apErr"></div>' +
+        '<button class="ap-go" id="apGo" type="button">進入</button>' +
+        '<button class="np-x" id="apCancel" type="button">取消</button>' +
+      '</div>';
+    panel.classList.add('show');
+    const pw = panel.querySelector('#apPw');
+    const tryIn = () => { if (pw.value === ADMIN_PW) openPanel(); else { panel.querySelector('#apErr').textContent = '密碼不對'; pw.value = ''; pw.focus(); } };
+    panel.querySelector('#apGo').onclick = tryIn;
+    pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryIn(); });
+    panel.querySelector('#apCancel').onclick = close;
+    pw.focus();
+  }
+  function openPanel() {
+    const rows = LESSONS.map((L, i) =>
+      '<div class="ap-row">' +
+        '<div class="ap-info"><b>第 ' + (i + 1) + ' 課</b> · ' + esc(L.level) + ' · ' + esc(L.article.title_zh || '') + (i === PROGRESS ? ' <span class="ap-cur">● 目前</span>' : '') + '</div>' +
+        '<div class="ap-acts">' +
+          '<button class="ap-mini" data-jump="' + i + '">跳到</button>' +
+          '<button class="ap-mini note" data-note="' + i + '">📥 筆記</button>' +
+        '</div>' +
+      '</div>'
+    ).join('');
+    panel.innerHTML =
+      '<div class="adminpanel-card wide">' +
+        '<div class="ap-title">⚙️ 管理控制面板</div>' +
+        '<div class="ap-sub">題庫共 ' + LESSONS.length + ' 課。「跳到」切換到那一課；「筆記」把該課整理成 Obsidian 筆記（複製＋obsidian 連結）。</div>' +
+        '<div class="ap-list">' + rows + '</div>' +
+        '<button class="np-x" id="apClose" type="button">關閉</button>' +
+      '</div>';
+    panel.classList.add('show');
+    panel.querySelector('#apClose').onclick = close;
+    panel.querySelectorAll('[data-jump]').forEach(b => b.onclick = () => gotoLesson(+b.dataset.jump));
+    panel.querySelectorAll('[data-note]').forEach(b => b.onclick = () => exportNote(+b.dataset.note));
+  }
+  panel.addEventListener('click', (e) => { if (e.target === panel) close(); });
+  entry.addEventListener('click', openGate);
+})();
 
 /* ---------- 密碼閘（軟性門檻） ---------- */
 (function gate() {
