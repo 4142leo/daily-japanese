@@ -398,7 +398,7 @@
   <footer class="end">
     <div class="closing" id="closing"></div>
     <div>明天同一時間，同一個網址見 🎌</div>
-    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-09a</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-09b</div>
   </footer>
 </div>
 
@@ -610,7 +610,8 @@ const speech = (function () {
   }
   let t;
   document.addEventListener('selectionchange', () => { clearTimeout(t); t = setTimeout(update, 200); });
-  bar.addEventListener('mousedown', (e) => e.preventDefault());               // 保留選取（桌機）
+  // 注意：不要在 bar 上 mousedown preventDefault——觸控螢幕上那會連按鈕的 click 一起吃掉。
+  // 選取文字已在 selectionchange 當下存進 curText，不需要在點擊時保留選取。
   bar.addEventListener('click', async (e) => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.a === 'close') { bar.hidden = true; out.hidden = true; try { window.getSelection().removeAllRanges(); } catch (_) {} return; }
