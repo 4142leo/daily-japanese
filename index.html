@@ -118,6 +118,21 @@
   }
   .rbtn.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
   .rbtn:disabled { opacity: .5; cursor: default; }
+  .rate { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); padding: 4px 12px; border: 1.5px solid var(--line); border-radius: 999px; }
+  .rate input[type=range] { width: 84px; accent-color: var(--accent); }
+  #rateVal { min-width: 36px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+  /* 選取文字工具（朗讀＋翻譯） */
+  .selbar, .selout { position: absolute; z-index: 90; }
+  .selbar { display: flex; gap: 4px; background: #263042; padding: 5px; border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.28); }
+  .selbar button { background: transparent; border: none; color: #fff; font-size: 14px; font-weight: 700; cursor: pointer; padding: 5px 9px; border-radius: 7px; white-space: nowrap; }
+  .selbar button:hover { background: rgba(255,255,255,.14); }
+  .selout {
+    max-width: 300px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; font-size: 15px; color: var(--ink);
+    box-shadow: 0 6px 18px rgba(0,0,0,.22); line-height: 1.6;
+  }
+  .selout .lbl { font-size: 12px; color: var(--muted); margin-bottom: 4px; word-break: break-all; }
 
   /* 閱讀文章 */
   ruby rt { font-size: .58em; color: var(--muted); font-weight: 400; user-select: none; }
@@ -297,6 +312,7 @@
       <button class="rbtn on" id="furiBtn" type="button">🈁 假名</button>
       <button class="rbtn" id="trBtn" type="button">🇹🇼 中譯</button>
       <button class="rbtn" id="ttsBtn" type="button">🔊 朗讀</button>
+      <label class="rate" id="rateWrap">🐢<input type="range" id="rateSlider" min="0.5" max="1.3" step="0.1" value="0.9" aria-label="語速">🐇<span id="rateVal">0.9×</span></label>
     </div>
     <h2 class="jp-title" id="artTitle"></h2>
     <div class="jp-title-zh tr" id="artTitleZh"></div>
@@ -423,40 +439,130 @@ $('trBtn').addEventListener('click', () => {
   const on = document.body.classList.toggle('tr-on');
   $('trBtn').classList.toggle('on', on);
 });
-(function tts() {
-  const btn = $('ttsBtn');
-  if (!('speechSynthesis' in window)) { btn.disabled = true; btn.textContent = '🔊 朗讀（此裝置不支援）'; return; }
-  // 只設 lang 不夠：沒有日語語音時瀏覽器會退回中文語音去念漢字（變成用中文發音）。
-  // 所以明確挑一個 ja 語音；找不到就明說，不要硬用其他語言念。
-  let jaVoice = null;
+// 只設 lang 不夠：沒有日語語音時瀏覽器會退回中文語音去念漢字。所以明確挑 ja 語音；
+// 找不到就明說，不硬用其他語言念。語速可調，整篇與選取朗讀共用這個模組。
+const speech = (function () {
+  const supported = 'speechSynthesis' in window;
+  let jaVoice = null, rate = 0.9;
+  try { const r = parseFloat(localStorage.getItem('dj_rate')); if (r >= 0.5 && r <= 1.3) rate = r; } catch (e) {}
   function pickVoice() {
+    if (!supported) return;
     const vs = speechSynthesis.getVoices();
     jaVoice = vs.find(v => /^ja\b/i.test(v.lang) || /^ja[-_]/i.test(v.lang)) ||
               vs.find(v => /japan|日本語/i.test(v.name)) || null;
   }
-  pickVoice();
-  if ('onvoiceschanged' in speechSynthesis) speechSynthesis.addEventListener('voiceschanged', pickVoice);
-  // 餵「假名讀音」給引擎：{漢字|かな} -> かな，發音最準，也不靠引擎自己判讀漢字。
-  const kana = (s) => String(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '$2');
-  let speaking = false;
-  const reset = () => { speaking = false; btn.textContent = '🔊 朗讀'; btn.classList.remove('on'); };
+  if (supported) { pickVoice(); if ('onvoiceschanged' in speechSynthesis) speechSynthesis.addEventListener('voiceschanged', pickVoice); }
+  return {
+    supported,
+    hasVoice() { pickVoice(); return !!jaVoice; },
+    getRate() { return rate; },
+    setRate(r) { rate = r; try { localStorage.setItem('dj_rate', String(r)); } catch (e) {} },
+    speak(text, onend) {
+      if (!supported) return false;
+      pickVoice();
+      if (!jaVoice) return false;
+      const u = new SpeechSynthesisUtterance(text);
+      u.voice = jaVoice; u.lang = jaVoice.lang || 'ja-JP'; u.rate = rate;
+      if (onend) { u.onend = onend; u.onerror = onend; }
+      speechSynthesis.cancel(); speechSynthesis.speak(u);
+      return true;
+    },
+    stop() { if (supported) speechSynthesis.cancel(); }
+  };
+})();
+
+/* 語速滑桿 */
+(function rateControl() {
+  const s = $('rateSlider'), v = $('rateVal');
+  if (!s) return;
+  s.value = String(speech.getRate());
+  v.textContent = speech.getRate().toFixed(1) + '×';
+  s.addEventListener('input', () => { const r = parseFloat(s.value); speech.setRate(r); v.textContent = r.toFixed(1) + '×'; });
+})();
+
+/* 整篇朗讀按鈕 */
+(function readAll() {
+  const btn = $('ttsBtn');
+  if (!speech.supported) { btn.disabled = true; btn.textContent = '🔊 朗讀（此裝置不支援）'; return; }
+  const kana = (s) => String(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '$2'); // 餵假名讀音，發音最準
+  let on = false;
+  const reset = () => { on = false; btn.textContent = '🔊 朗讀'; btn.classList.remove('on'); };
   btn.addEventListener('click', () => {
-    if (speaking) { speechSynthesis.cancel(); reset(); return; }
-    pickVoice();
-    if (!jaVoice) {
+    if (on) { speech.stop(); reset(); return; }
+    if (!speech.hasVoice()) {
       btn.textContent = '🔊 此裝置沒有日語語音'; btn.classList.remove('on');
-      setTimeout(() => { btn.textContent = '🔊 朗讀'; }, 2800);
-      return;
+      setTimeout(() => { btn.textContent = '🔊 朗讀'; }, 2800); return;
     }
-    const text = kana(LESSON.article.title) + '。' +
-      LESSON.article.paragraphs.map(p => kana(p.jp)).join('');
-    const u = new SpeechSynthesisUtterance(text);
-    u.voice = jaVoice; u.lang = jaVoice.lang || 'ja-JP'; u.rate = 0.9;
-    u.onend = reset; u.onerror = reset;
-    speechSynthesis.cancel(); speechSynthesis.speak(u);
-    speaking = true; btn.textContent = '⏸ 停止'; btn.classList.add('on');
+    const text = kana(LESSON.article.title) + '。' + LESSON.article.paragraphs.map(p => kana(p.jp)).join('');
+    if (speech.speak(text, reset)) { on = true; btn.textContent = '⏸ 停止'; btn.classList.add('on'); }
   });
-  window.addEventListener('pagehide', () => speechSynthesis.cancel());
+  window.addEventListener('pagehide', () => speech.stop());
+})();
+
+/* ---------- 選取文字：朗讀＋翻譯 ---------- */
+(function selectionTools() {
+  const bar = document.createElement('div'); bar.className = 'selbar'; bar.hidden = true;
+  bar.innerHTML = '<button type="button" data-a="say">🔊 唸</button><button type="button" data-a="tr">🇹🇼 翻譯</button>';
+  const out = document.createElement('div'); out.className = 'selout'; out.hidden = true;
+  document.body.appendChild(bar); document.body.appendChild(out);
+
+  const nodeEl = (n) => (n && n.nodeType === 1 ? n : (n ? n.parentNode : null));
+  function cleanText() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return '';
+    const frag = sel.getRangeAt(0).cloneContents();       // 去掉 <rt> 假名，只留漢字/假名本體
+    frag.querySelectorAll('rt').forEach(rt => rt.remove());
+    return (frag.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+  function clampLeft(px, el) {
+    return Math.max(8, Math.min(px, window.scrollX + document.documentElement.clientWidth - el.offsetWidth - 8));
+  }
+  let curText = '';
+  function update() {
+    const sel = window.getSelection();
+    const text = cleanText();
+    const inArticle = sel && sel.rangeCount && $('articleCard').contains(nodeEl(sel.getRangeAt(0).commonAncestorContainer));
+    if (!text || !inArticle) { bar.hidden = true; out.hidden = true; return; }   // curText 保留，供剛點按鈕時用
+    curText = text; out.hidden = true;
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    bar.hidden = false;
+    bar.style.left = clampLeft(window.scrollX + rect.left + rect.width / 2 - bar.offsetWidth / 2, bar) + 'px';
+    const top = window.scrollY + rect.top - bar.offsetHeight - 8;
+    bar.style.top = (top < window.scrollY + 4 ? window.scrollY + rect.bottom + 8 : top) + 'px';
+  }
+  function showOut(html) {
+    out.innerHTML = html; out.hidden = false;
+    out.style.top = ((parseFloat(bar.style.top) || 0) + bar.offsetHeight + 6) + 'px';
+    out.style.left = clampLeft(parseFloat(bar.style.left) || 8, out) + 'px';
+  }
+  async function translate(text) {
+    try {
+      const g = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl=zh-TW&dt=t&q=' + encodeURIComponent(text);
+      const r = await fetch(g);
+      if (r.ok) { const d = await r.json(); const tt = (d[0] || []).map(x => x[0]).join(''); if (tt) return tt; }
+    } catch (e) {}
+    try {
+      const m = 'https://api.mymemory.translated.net/get?langpair=ja|zh-TW&q=' + encodeURIComponent(text);
+      const r2 = await fetch(m); const d2 = await r2.json();
+      if (d2 && d2.responseData && d2.responseData.translatedText) return d2.responseData.translatedText;
+    } catch (e) {}
+    return '（翻譯失敗，可能是網路或今日免費額度用完）';
+  }
+  let t;
+  document.addEventListener('selectionchange', () => { clearTimeout(t); t = setTimeout(update, 200); });
+  bar.addEventListener('mousedown', (e) => e.preventDefault());               // 保留選取（桌機）
+  bar.addEventListener('click', async (e) => {
+    const b = e.target.closest('button'); if (!b || !curText) return;
+    if (b.dataset.a === 'say') {
+      if (!speech.hasVoice()) { showOut('（此裝置沒有日語語音，無法朗讀——桌機請用 Edge 或裝日語語音）'); return; }
+      speech.speak(curText);
+    } else {
+      showOut('翻譯中…');
+      const zh = await translate(curText);
+      showOut('<div class="lbl">' + esc(curText) + '</div><div>' + esc(zh) + '</div>');
+    }
+  });
+  document.addEventListener('scroll', () => { bar.hidden = true; out.hidden = true; }, { passive: true });
 })();
 
 /* ---------- 測驗引擎（單人／雙人共用，跨閱讀理解＋複習題組） ---------- */
