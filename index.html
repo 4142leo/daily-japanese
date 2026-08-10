@@ -231,6 +231,9 @@
   }
   .playsent:hover { background: var(--accent); color: #fff; }
   .playsent:active { transform: scale(.9); }
+  .mini-say { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-left: 6px; padding: 0; border: none; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 11px; line-height: 1; cursor: pointer; vertical-align: middle; flex: none; }
+  .mini-say:hover { background: var(--accent); color: #fff; }
+  .mini-say:active { transform: scale(.9); }
   .source {
     font-size: 12.5px; color: var(--muted); margin: 16px 0 0;
     padding-top: 12px; border-top: 1px solid var(--line);
@@ -463,7 +466,7 @@
   <footer class="end">
     <div class="closing" id="closing"></div>
     <div>明天同一時間，同一個網址見 🎌</div>
-    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-09j</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-09k</div>
   </footer>
 </div>
 
@@ -495,8 +498,10 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // {漢字|かな} -> <ruby>漢字<rt>かな</rt></ruby>；先跳脫再轉標記，內容安全
 const ruby = (s) => esc(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '<ruby>$1<rt>$2</rt></ruby>');
-// 去掉假名標記，保留漢字本體（給朗讀 TTS 用）
+// 去掉假名標記，保留漢字本體
 const plain = (s) => String(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '$1');
+// {漢字|かな} -> かな（讀音），給 TTS 朗讀用（發音最準）
+const kanaOf = (s) => String(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '$2');
 
 /* ---------- 頂部資訊與連續天數 ---------- */
 (function header() {
@@ -1028,7 +1033,7 @@ setMode('solo');
 
 /* ---------- 文法 ---------- */
 (function grammar() {
-  $('grammarBox').innerHTML = LESSON.grammar.map(g => {
+  $('grammarBox').innerHTML = LESSON.grammar.map((g, gi) => {
     let sent = ruby(g.sentence);
     if (g.highlight) {
       const h = ruby(g.highlight);
@@ -1036,14 +1041,20 @@ setMode('solo');
     }
     return '<div class="gcard">' +
       '<p class="gname">' + esc(g.name) + '</p>' +
-      '<p class="gsent">' + sent + '</p>' +
+      '<p class="gsent">' + sent + '<button class="mini-say" type="button" data-gs="' + gi + '" aria-label="唸例句">🔊</button></p>' +
       '<p class="grule">' + ruby(g.rule) + '</p>' +
-      '<div class="gex">' + g.examples.map(ex =>
-        '<div class="jp">' + ruby(ex.jp) + '</div><div class="zh">' + esc(ex.zh) + '</div>'
+      '<div class="gex">' + g.examples.map((ex, ei) =>
+        '<div class="jp">' + ruby(ex.jp) + '<button class="mini-say" type="button" data-gs="' + gi + '" data-ge="' + ei + '" aria-label="唸例句">🔊</button></div><div class="zh">' + esc(ex.zh) + '</div>'
       ).join('') + '</div>' +
       '<div class="gmis">⚠️ 常見錯誤：' + ruby(g.mistake) + '</div>' +
     '</div>';
   }).join('');
+  $('grammarBox').addEventListener('click', (e) => {
+    const b = e.target.closest('.mini-say'); if (!b) return;
+    const gi = +b.dataset.gs;
+    if (b.dataset.ge != null) speech.speak(kanaOf(LESSON.grammar[gi].examples[+b.dataset.ge].jp));
+    else speech.speak(kanaOf(LESSON.grammar[gi].sentence));
+  });
 })();
 
 /* ---------- 單字表 ---------- */
@@ -1053,14 +1064,20 @@ setMode('solo');
       '<div class="vhead">' +
         '<span class="vword">' + esc(v.word) + '</span>' +
         '<span class="vread">' + esc(v.reading) + '</span>' +
+        '<button class="mini-say" type="button" data-sw="' + i + '" aria-label="唸單字">🔊</button>' +
         '<span class="vlevel">' + esc(v.level) + '</span>' +
         '<span class="vpos">' + esc(v.pos) + '</span>' +
         '<span class="vzh">' + esc(v.zh) + '</span>' +
       '</div>' +
-      '<p class="vex">' + ruby(v.example) + '</p>' +
+      '<p class="vex">' + ruby(v.example) + '<button class="mini-say" type="button" data-se="' + i + '" aria-label="唸例句">🔊</button></p>' +
       '<div class="vexzh">' + esc(v.example_zh) + '</div>' +
     '</div>'
   ).join('');
+  $('vocabBox').addEventListener('click', (e) => {
+    const b = e.target.closest('.mini-say'); if (!b) return;
+    if (b.dataset.sw != null) speech.speak(LESSON.vocab[+b.dataset.sw].reading);
+    else if (b.dataset.se != null) speech.speak(kanaOf(LESSON.vocab[+b.dataset.se].example));
+  });
 })();
 
 $('closing').textContent = LESSON.closing;
