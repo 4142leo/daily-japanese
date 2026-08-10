@@ -188,7 +188,8 @@
   .rbtn:disabled { opacity: .5; cursor: default; }
   .rate { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); padding: 4px 12px; border: 1.5px solid var(--line); border-radius: 999px; }
   .rate input[type=range] { width: 84px; accent-color: var(--accent); }
-  #rateVal { min-width: 36px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  #rateVal, #vrateVal { min-width: 36px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .vrate { margin: 0 0 14px; }
 
   /* 選取文字工具（朗讀＋翻譯） */
   .selbar, .selout { position: absolute; z-index: 90; }
@@ -460,13 +461,14 @@
 
   <section class="card">
     <p class="eyebrow"><b>05</b> 單字表 · Vocabulary</p>
+    <label class="rate vrate" id="vrateWrap">🔊 單字/例句語速 🐢<input type="range" id="vrateSlider" min="0.5" max="1.3" step="0.1" value="0.9" aria-label="單字例句語速">🐇<span id="vrateVal">0.9×</span></label>
     <div class="vgrid" id="vocabBox"></div>
   </section>
 
   <footer class="end">
     <div class="closing" id="closing"></div>
     <div>明天同一時間，同一個網址見 🎌</div>
-    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-09k</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-09l</div>
   </footer>
 </div>
 
@@ -587,12 +589,13 @@ const speech = (function () {
     hasVoice() { pickVoice(); return !!jaVoice; },
     getRate() { return rate; },
     setRate(r) { rate = r; try { localStorage.setItem('dj_rate', String(r)); } catch (e) {} },
-    speak(text, onend) {
+    speak(text, onend, rateArg) {
       if (!supported) return false;
       pickVoice();
       if (!jaVoice) return false;
       const u = new SpeechSynthesisUtterance(text);
-      u.voice = jaVoice; u.lang = jaVoice.lang || 'ja-JP'; u.rate = rate;
+      u.voice = jaVoice; u.lang = jaVoice.lang || 'ja-JP';
+      u.rate = (typeof rateArg === 'number') ? rateArg : rate;   // 可傳單次語速（單字/例句用），否則用整篇語速
       if (onend) { u.onend = onend; u.onerror = onend; }
       speechSynthesis.cancel(); speechSynthesis.speak(u);
       return true;
@@ -601,6 +604,13 @@ const speech = (function () {
     resume() { if (supported) speechSynthesis.resume(); },
     stop() { if (supported) speechSynthesis.cancel(); }
   };
+})();
+
+/* 單字/例句的獨立語速（跟文章朗讀分開） */
+const vocabSpeed = (function () {
+  let r = 0.9;
+  try { const v = parseFloat(localStorage.getItem('dj_rate_vocab')); if (v >= 0.5 && v <= 1.3) r = v; } catch (e) {}
+  return { get: () => r, set: (x) => { r = x; try { localStorage.setItem('dj_rate_vocab', String(x)); } catch (e) {} } };
 })();
 
 /* 語速滑桿 */
@@ -1052,8 +1062,8 @@ setMode('solo');
   $('grammarBox').addEventListener('click', (e) => {
     const b = e.target.closest('.mini-say'); if (!b) return;
     const gi = +b.dataset.gs;
-    if (b.dataset.ge != null) speech.speak(kanaOf(LESSON.grammar[gi].examples[+b.dataset.ge].jp));
-    else speech.speak(kanaOf(LESSON.grammar[gi].sentence));
+    if (b.dataset.ge != null) speech.speak(kanaOf(LESSON.grammar[gi].examples[+b.dataset.ge].jp), null, vocabSpeed.get());
+    else speech.speak(kanaOf(LESSON.grammar[gi].sentence), null, vocabSpeed.get());
   });
 })();
 
@@ -1075,9 +1085,15 @@ setMode('solo');
   ).join('');
   $('vocabBox').addEventListener('click', (e) => {
     const b = e.target.closest('.mini-say'); if (!b) return;
-    if (b.dataset.sw != null) speech.speak(LESSON.vocab[+b.dataset.sw].reading);
-    else if (b.dataset.se != null) speech.speak(kanaOf(LESSON.vocab[+b.dataset.se].example));
+    if (b.dataset.sw != null) speech.speak(LESSON.vocab[+b.dataset.sw].reading, null, vocabSpeed.get());
+    else if (b.dataset.se != null) speech.speak(kanaOf(LESSON.vocab[+b.dataset.se].example), null, vocabSpeed.get());
   });
+  // 單字/例句語速拉桿（與文章分開）
+  (function () {
+    const s = $('vrateSlider'), v = $('vrateVal'); if (!s) return;
+    s.value = String(vocabSpeed.get()); v.textContent = vocabSpeed.get().toFixed(1) + '×';
+    s.addEventListener('input', () => { const r = parseFloat(s.value); vocabSpeed.set(r); v.textContent = r.toFixed(1) + '×'; });
+  })();
 })();
 
 $('closing').textContent = LESSON.closing;
@@ -1245,7 +1261,7 @@ async function exportNote(L) {
     panel.querySelector('.rev-close').onclick = () => panel.classList.remove('show');
     panel.querySelectorAll('[data-sc]').forEach(b => b.onclick = () => { scope = b.dataset.sc; start(); });
     const c = panel.querySelector('.revcard'); if (c && deck.length) c.onclick = () => { flipped = !flipped; render(); };
-    const sy = panel.querySelector('.rev-say'); if (sy) sy.onclick = (e) => { e.stopPropagation(); if (deck[idx]) speech.speak(deck[idx].reading); };
+    const sy = panel.querySelector('.rev-say'); if (sy) sy.onclick = (e) => { e.stopPropagation(); if (deck[idx]) speech.speak(deck[idx].reading, null, vocabSpeed.get()); };
     const pv = panel.querySelector('.rev-prev'); if (pv) pv.onclick = () => { idx = (idx - 1 + deck.length) % deck.length; flipped = false; render(); };
     const nx = panel.querySelector('.rev-next'); if (nx) nx.onclick = () => { idx = (idx + 1) % deck.length; flipped = false; render(); };
     const fl = panel.querySelector('.rev-flip'); if (fl) fl.onclick = () => { flipped = !flipped; render(); };
