@@ -499,7 +499,7 @@
   <footer class="end">
     <div class="closing" id="closing"></div>
     <div>明天同一時間，同一個網址見 🎌</div>
-    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-09n</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-13a</div>
   </footer>
 </div>
 
@@ -1308,48 +1308,83 @@ async function exportNote(L) {
   const btn = $('ankiBtn');
   if (!btn) return;
   const panel = document.createElement('div'); panel.className = 'anki'; document.body.appendChild(panel);
-  const SKEY = 'dj_anki', NEW_PER_SESSION = 20, DAY = 86400000;
+  const SKEY = 'dj_anki', DKEY = 'dj_anki_daily', MIN = 60000, DAY = 86400000;
+  // Anki 預設值（查證自 Anki 演算法）：每日新卡 20、學習步驟 1分/10分、畢業 1天、簡單 4天、
+  // 起始 ease 2.5、Hard×1.2(ease−0.15)、Good×ease、Easy×ease×1.3(ease+0.15)、Again 重學(ease−0.2)。
+  const NEW_PER_DAY = 20, REVIEW_PER_DAY = 200;
+  const LEARN_STEPS = [1, 10], GRAD_IV = 1, EASY_IV = 4, RELEARN_STEP = 10;
+  const START_EASE = 2.5, EASE_MIN = 1.3, HARD_MULT = 1.2, EASY_BONUS = 1.3, LAPSE_MULT = 0.1, MAX_IV = 36500;
   const keyOf = (c) => c.word + '|' + c.reading;
   const rubyA = (s) => esc(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '<ruby>$1<rt>$2</rt></ruby>');
   const load = () => { try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch (e) { return {}; } };
   const save = (s) => { try { localStorage.setItem(SKEY, JSON.stringify(s)); } catch (e) {} };
   const sh = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
-  let state, queue, cur, flipped;
+  const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
+  function loadDaily() { let o = {}; try { o = JSON.parse(localStorage.getItem(DKEY) || '{}'); } catch (e) {} if (o.date !== todayStr()) o = { date: todayStr(), newCount: 0 }; return o; }
+  function saveDaily() { try { localStorage.setItem(DKEY, JSON.stringify(daily)); } catch (e) {} }
+  let state, daily, queue, cur, flipped;
 
   function buildQueue() {
-    state = load();
-    const now = Date.now(), due = [], fresh = [];
+    state = load(); daily = loadDaily();
+    const now = Date.now(), learn = [], rev = [], fresh = [];
     VOCAB_DECK.forEach(c => {
       const st = state[keyOf(c)];
-      if (!st) fresh.push(c); else if (st.due <= now) due.push(c);
+      if (!st) fresh.push(c);
+      else if ((st.phase === 'learning' || st.phase === 'relearning') && st.due <= now) learn.push(c);
+      else if (st.phase === 'review' && st.due <= now) rev.push(c);
     });
-    queue = sh(due).concat(sh(fresh).slice(0, NEW_PER_SESSION));
+    const newBudget = Math.max(0, NEW_PER_DAY - daily.newCount);   // 今日還能背幾個新字
+    sh(rev); sh(fresh);
+    queue = learn.concat(rev.slice(0, REVIEW_PER_DAY)).concat(fresh.slice(0, newBudget));
   }
   function preview(c, r) {
-    const st = state[keyOf(c)] || { interval: 0, ease: 2.5 };
-    if (r === 'again') return '<1 分';
-    if (r === 'hard') return st.interval < 1 ? '10 分' : Math.round(st.interval * 1.2) + ' 天';
-    if (r === 'good') return (st.interval < 1 ? 1 : Math.round(st.interval * st.ease)) + ' 天';
-    return (st.interval < 1 ? 3 : Math.round(st.interval * st.ease * 1.3)) + ' 天';
+    const st = state[keyOf(c)];
+    const ph = st ? st.phase : 'learning';
+    if (ph === 'learning') {
+      const step = st ? (st.step || 0) : 0;
+      if (r === 'again') return LEARN_STEPS[0] + ' 分';
+      if (r === 'hard') return Math.round((LEARN_STEPS[step] || 1) * 1.5) + ' 分';
+      if (r === 'good') return (step + 1 >= LEARN_STEPS.length) ? (GRAD_IV + ' 天') : (LEARN_STEPS[step + 1] + ' 分');
+      return EASY_IV + ' 天';
+    }
+    if (ph === 'relearning') { return r === 'again' ? (RELEARN_STEP + ' 分') : (Math.max(1, st.interval || 1) + ' 天'); }
+    const iv = st.interval || 1, ease = st.ease || START_EASE;
+    if (r === 'again') return RELEARN_STEP + ' 分';
+    if (r === 'hard') return Math.max(iv + 1, Math.round(iv * HARD_MULT)) + ' 天';
+    if (r === 'good') return Math.round(iv * ease) + ' 天';
+    return Math.round(iv * ease * EASY_BONUS) + ' 天';
   }
   function schedule(c, r) {
     const k = keyOf(c), now = Date.now();
-    let st = state[k] || { interval: 0, ease: 2.5, reps: 0 };
-    if (r === 'again') { st.reps = 0; st.interval = 0; st.ease = Math.max(1.3, st.ease - 0.2); st.due = now + 60000; }
-    else if (r === 'hard') {
-      st.ease = Math.max(1.3, st.ease - 0.15);
-      if (st.interval < 1) { st.due = now + 600000; }                              // 新字：約 10 分後再出現（仍在學習）
-      else { st.reps++; st.interval = Math.max(1, Math.round(st.interval * 1.2)); st.due = now + st.interval * DAY; }
+    let st = state[k];
+    if (!st) { daily.newCount++; saveDaily(); st = { phase: 'learning', step: 0, reps: 0 }; }   // 首次出現＝新字，計入今日新字
+    if (st.phase === 'learning') {
+      if (r === 'again') { st.step = 0; st.due = now + LEARN_STEPS[0] * MIN; }
+      else if (r === 'hard') { st.due = now + Math.round((LEARN_STEPS[st.step || 0] || 1) * 1.5) * MIN; }
+      else if (r === 'good') {
+        st.step = (st.step || 0) + 1;
+        if (st.step >= LEARN_STEPS.length) { st.phase = 'review'; st.ease = START_EASE; st.interval = GRAD_IV; st.due = now + GRAD_IV * DAY; }
+        else st.due = now + LEARN_STEPS[st.step] * MIN;
+      } else { st.phase = 'review'; st.ease = START_EASE; st.interval = EASY_IV; st.due = now + EASY_IV * DAY; }
+    } else if (st.phase === 'relearning') {
+      if (r === 'again') st.due = now + RELEARN_STEP * MIN;
+      else { st.phase = 'review'; st.interval = Math.max(1, st.interval || 1); st.due = now + st.interval * DAY; }
+    } else {   // review（SM-2）
+      const iv = st.interval || 1, ease = st.ease || START_EASE;
+      if (r === 'again') { st.ease = Math.max(EASE_MIN, ease - 0.20); st.interval = Math.max(1, Math.round(iv * LAPSE_MULT)); st.phase = 'relearning'; st.due = now + RELEARN_STEP * MIN; }
+      else if (r === 'hard') { st.ease = Math.max(EASE_MIN, ease - 0.15); st.interval = Math.min(MAX_IV, Math.max(iv + 1, Math.round(iv * HARD_MULT))); st.due = now + st.interval * DAY; }
+      else if (r === 'good') { st.interval = Math.min(MAX_IV, Math.round(iv * ease)); st.due = now + st.interval * DAY; }
+      else { st.ease = ease + 0.15; st.interval = Math.min(MAX_IV, Math.round(iv * ease * EASY_BONUS)); st.due = now + st.interval * DAY; }
     }
-    else if (r === 'good') { st.reps++; st.interval = st.interval < 1 ? 1 : Math.round(st.interval * st.ease); st.due = now + st.interval * DAY; }
-    else { st.reps++; st.ease += 0.15; st.interval = st.interval < 1 ? 3 : Math.round(st.interval * st.ease * 1.3); st.due = now + st.interval * DAY; }
+    st.reps = (st.reps || 0) + 1;
     state[k] = st; save(state);
+    return st;
   }
-  function count() { const el = panel.querySelector('.anki-count'); if (el) el.textContent = '待複習 ' + queue.length; }
+  function count() { const el = panel.querySelector('.anki-count'); if (el) el.textContent = '剩 ' + queue.length + '（新字 ' + daily.newCount + '/' + NEW_PER_DAY + '）'; }
   function render() {
     const body = panel.querySelector('.anki-body');
     if (!queue.length) {
-      body.innerHTML = '<div class="anki-done">🎉 這輪複習完成！<br>到期的字之後會再出現。</div>';
+      body.innerHTML = '<div class="anki-done">🎉 今天的字都複習完了！<br>今日新字 ' + daily.newCount + '/' + NEW_PER_DAY + '，到期的字之後會再出現。</div>';
       count(); return;
     }
     const c = queue[cur];
@@ -1379,9 +1414,9 @@ async function exportNote(L) {
     const ex = panel.querySelector('#aExSay'); if (ex) ex.onclick = () => speech.speak(kanaOf(c.example), null, vocabSpeed.get());
     const sw = panel.querySelector('#ankiShow'); if (sw) sw.onclick = () => { flipped = true; render(); };
     panel.querySelectorAll('.anki-actions [data-r]').forEach(b => b.onclick = () => {
-      schedule(c, b.dataset.r);
+      const st = schedule(c, b.dataset.r);
       queue.splice(cur, 1);
-      if (b.dataset.r === 'again') queue.push(c);   // 這輪稍後再出現
+      if (st.due - Date.now() < 20 * MIN) queue.push(c);   // 短間隔（學習/重學中）本輪稍後再出現
       if (cur >= queue.length) cur = 0;
       flipped = false; render();
     });
