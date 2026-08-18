@@ -198,6 +198,29 @@
   .anki-actions.four .anki-sub { font-size: 10.5px; }
   .anki-done { text-align: center; color: var(--muted); font-size: 16px; line-height: 1.9; }
   .syncbtn { margin-top: 12px; background: transparent; border: 1.5px solid var(--line); color: var(--accent); font-size: 13px; font-weight: 700; padding: 7px 16px; border-radius: 999px; cursor: pointer; }
+
+  /* 五十音表（獨立全螢幕畫面） */
+  .kanabtn { display: block; width: 100%; margin-top: 8px; padding: 12px; border-radius: 12px; border: 1.5px solid var(--accent); background: var(--surface); color: var(--accent); font-size: 16px; font-weight: 800; cursor: pointer; }
+  .kana { position: fixed; inset: 0; z-index: 140; display: none; flex-direction: column; background: var(--bg); }
+  .kana.show { display: flex; }
+  .kana-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .kana-top > span { font-size: 15px; font-weight: 700; }
+  .kana-back { background: transparent; border: none; color: var(--accent); font-size: 15px; font-weight: 700; cursor: pointer; }
+  .kana-toggle { display: flex; gap: 6px; }
+  .kana-toggle button { padding: 5px 12px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--surface); color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer; }
+  .kana-toggle button.on { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .kana-body { flex: 1; overflow-y: auto; padding: 12px 12px 44px; max-width: 620px; margin: 0 auto; width: 100%; box-sizing: border-box; }
+  .kana-body h3 { font-size: 14px; color: var(--accent); margin: 18px 0 8px; font-weight: 800; }
+  .kana-body h3:first-child { margin-top: 4px; }
+  .kana-grid { display: grid; gap: 6px; }
+  .kana-grid.g5 { grid-template-columns: repeat(5, 1fr); }
+  .kana-grid.g3 { grid-template-columns: repeat(3, 1fr); }
+  .kana-cell { aspect-ratio: 1 / 1; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; padding: 2px; }
+  .kana-cell:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .kana-cell:active { transform: scale(.93); }
+  .kana-cell .k { font-size: 23px; font-weight: 700; line-height: 1.1; }
+  .kana-cell .r { font-size: 11px; color: var(--muted); }
+  .kana-cell.empty { border: none; background: transparent; cursor: default; pointer-events: none; }
   .notepanel-card input { padding: 11px 13px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--bg); color: var(--ink); font-size: 15px; }
 
   section.card {
@@ -426,6 +449,7 @@
     <div class="chips" id="chips"></div>
     <div class="lessonnav" id="lessonNav"></div>
     <button class="ankibtn" id="ankiBtn" type="button">🃏 單字測驗（Anki）</button>
+    <button class="kanabtn" id="kanaBtn" type="button">あ 五十音表</button>
   </header>
 
   <div class="scorebar" id="scorebar"></div>
@@ -501,7 +525,7 @@
   <footer class="end">
     <div class="closing" id="closing"></div>
     <div>明天同一時間，同一個網址見 🎌</div>
-    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-13d</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-13e</div>
   </footer>
 </div>
 
@@ -1531,6 +1555,82 @@ async function exportNote(L) {
   const _set = localStorage.setItem.bind(localStorage);
   localStorage.setItem = function (k, v) { _set(k, v); if (SYNC_KEY(k)) schedulePush(); };
   window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') pushState(); });
+})();
+
+/* ---------- 五十音表（平/片假名，清音/濁音/半濁音/拗音，點格子發音）---------- */
+(function kana() {
+  const btn = $('kanaBtn');
+  if (!btn) return;
+  const panel = document.createElement('div'); panel.className = 'kana'; document.body.appendChild(panel);
+  const kata = (s) => s.replace(/[ぁ-ゖ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60));  // 平假名→片假名
+  const E = null;
+  const SEION = [
+    [['あ','a'],['い','i'],['う','u'],['え','e'],['お','o']],
+    [['か','ka'],['き','ki'],['く','ku'],['け','ke'],['こ','ko']],
+    [['さ','sa'],['し','shi'],['す','su'],['せ','se'],['そ','so']],
+    [['た','ta'],['ち','chi'],['つ','tsu'],['て','te'],['と','to']],
+    [['な','na'],['に','ni'],['ぬ','nu'],['ね','ne'],['の','no']],
+    [['は','ha'],['ひ','hi'],['ふ','fu'],['へ','he'],['ほ','ho']],
+    [['ま','ma'],['み','mi'],['む','mu'],['め','me'],['も','mo']],
+    [['や','ya'],E,['ゆ','yu'],E,['よ','yo']],
+    [['ら','ra'],['り','ri'],['る','ru'],['れ','re'],['ろ','ro']],
+    [['わ','wa'],E,E,E,['を','wo']],
+    [['ん','n'],E,E,E,E],
+  ];
+  const DAKUON = [
+    [['が','ga'],['ぎ','gi'],['ぐ','gu'],['げ','ge'],['ご','go']],
+    [['ざ','za'],['じ','ji'],['ず','zu'],['ぜ','ze'],['ぞ','zo']],
+    [['だ','da'],['ぢ','ji'],['づ','zu'],['で','de'],['ど','do']],
+    [['ば','ba'],['び','bi'],['ぶ','bu'],['べ','be'],['ぼ','bo']],
+    [['ぱ','pa'],['ぴ','pi'],['ぷ','pu'],['ぺ','pe'],['ぽ','po']],
+  ];
+  const YOON = [
+    [['きゃ','kya'],['きゅ','kyu'],['きょ','kyo']],
+    [['しゃ','sha'],['しゅ','shu'],['しょ','sho']],
+    [['ちゃ','cha'],['ちゅ','chu'],['ちょ','cho']],
+    [['にゃ','nya'],['にゅ','nyu'],['にょ','nyo']],
+    [['ひゃ','hya'],['ひゅ','hyu'],['ひょ','hyo']],
+    [['みゃ','mya'],['みゅ','myu'],['みょ','myo']],
+    [['りゃ','rya'],['りゅ','ryu'],['りょ','ryo']],
+    [['ぎゃ','gya'],['ぎゅ','gyu'],['ぎょ','gyo']],
+    [['じゃ','ja'],['じゅ','ju'],['じょ','jo']],
+    [['びゃ','bya'],['びゅ','byu'],['びょ','byo']],
+    [['ぴゃ','pya'],['ぴゅ','pyu'],['ぴょ','pyo']],
+  ];
+  let mode = 'hira';
+  try { const m = localStorage.getItem('dj_kana_mode'); if (m === 'kata' || m === 'hira') mode = m; } catch (e) {}
+
+  function grid(rows) {
+    let h = '';
+    rows.forEach(row => row.forEach(cell => {
+      if (!cell) { h += '<div class="kana-cell empty"></div>'; return; }
+      const glyph = mode === 'kata' ? kata(cell[0]) : cell[0];
+      h += '<div class="kana-cell" data-k="' + esc(glyph) + '"><span class="k">' + esc(glyph) + '</span><span class="r">' + esc(cell[1]) + '</span></div>';
+    }));
+    return h;
+  }
+  function render() {
+    panel.innerHTML =
+      '<div class="kana-top"><button class="kana-back" id="kanaBack" type="button">← 回文章</button>' +
+      '<span>五十音表 · 點格子發音</span>' +
+      '<div class="kana-toggle"><button data-m="hira" class="' + (mode === 'hira' ? 'on' : '') + '">平假名</button>' +
+      '<button data-m="kata" class="' + (mode === 'kata' ? 'on' : '') + '">片假名</button></div></div>' +
+      '<div class="kana-body">' +
+        '<h3>清音（基本 50 音）</h3><div class="kana-grid g5">' + grid(SEION) + '</div>' +
+        '<h3>濁音・半濁音</h3><div class="kana-grid g5">' + grid(DAKUON) + '</div>' +
+        '<h3>拗音（小さい ゃゅょ）</h3><div class="kana-grid g3">' + grid(YOON) + '</div>' +
+      '</div>';
+    panel.querySelector('#kanaBack').onclick = () => { speech.stop(); panel.classList.remove('show'); };
+    panel.querySelectorAll('.kana-toggle [data-m]').forEach(b => b.onclick = () => {
+      mode = b.dataset.m; try { localStorage.setItem('dj_kana_mode', mode); } catch (e) {}
+      const y = panel.querySelector('.kana-body').scrollTop; render(); panel.querySelector('.kana-body').scrollTop = y;
+    });
+    panel.querySelector('.kana-body').addEventListener('click', (e) => {
+      const c = e.target.closest('.kana-cell'); if (!c || !c.dataset.k) return;
+      speech.speak(c.dataset.k, null, vocabSpeed.get());
+    });
+  }
+  btn.addEventListener('click', () => { render(); panel.classList.add('show'); });
 })();
 
 /* ---------- 密碼閘（軟性門檻） ---------- */
