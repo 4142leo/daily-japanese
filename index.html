@@ -499,7 +499,7 @@
   <footer class="end">
     <div class="closing" id="closing"></div>
     <div>明天同一時間，同一個網址見 🎌</div>
-    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-13a</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-13b</div>
   </footer>
 </div>
 
@@ -1393,10 +1393,10 @@ async function exportNote(L) {
     let h = '<div class="anki-card">' +
       '<div class="anki-lv">' + esc(c.level || '?') + '</div>' +
       '<div class="anki-word">' + esc(c.word) + '</div>' +
-      '<div class="anki-reading">' + esc(c.reading) + '</div>' +
       '<button class="anki-say" id="aSay" type="button">🔊</button>';
     if (flipped) {
-      h += '<div style="width:60%;height:1px;background:var(--line);margin:6px 0"></div>' +
+      h += '<div class="anki-reading">' + esc(c.reading) + '</div>' +
+        '<div style="width:60%;height:1px;background:var(--line);margin:6px 0"></div>' +
         '<div class="anki-zh">' + esc(c.zh) + '</div>' +
         (c.example ? '<div class="anki-ex">' + rubyA(c.example) + '<button class="anki-ex-say" id="aExSay" type="button">🔊</button></div>' : '') +
         (c.example_zh ? '<div class="anki-exzh">' + esc(c.example_zh) + '</div>' : '');
