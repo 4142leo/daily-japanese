@@ -501,7 +501,7 @@
   <footer class="end">
     <div class="closing" id="closing"></div>
     <div>明天同一時間，同一個網址見 🎌</div>
-    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-13c</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);opacity:.7">版本 v2026-08-13d</div>
   </footer>
 </div>
 
@@ -1489,21 +1489,33 @@ async function exportNote(L) {
       panel.querySelector('#syncClose').onclick = () => panel.classList.remove('show');
     } else {
       panel.innerHTML = '<div class="notepanel-card"><div class="np-title">☁️ 登入雲端同步</div>' +
-        '<div class="np-msg">輸入 email，寄一封登入連結給你（免密碼）。點信裡的連結就會登入，之後進度跨裝置同步。</div>' +
-        '<input id="syncEmail" type="email" placeholder="你的 email" autocomplete="email">' +
+        '<div class="np-msg">用 email＋密碼（免收信）。第一次用按「註冊」，之後按「登入」。兩人各用自己的 email，進度分開、又能各自跨裝置同步。</div>' +
+        '<input id="syncEmail" type="email" placeholder="email" autocomplete="username">' +
+        '<input id="syncPw" type="password" placeholder="密碼（至少 6 位）" autocomplete="current-password">' +
         '<div class="ap-err" id="syncErr"></div>' +
-        '<button class="np-obs" id="syncSend" type="button">寄登入連結</button>' +
+        '<button class="np-obs" id="syncIn" type="button">登入</button>' +
+        '<button class="np-x" id="syncUp" type="button">第一次用 → 註冊</button>' +
         '<button class="np-x" id="syncClose" type="button">關閉</button></div>';
+      const creds = () => ({ email: (panel.querySelector('#syncEmail').value || '').trim(), password: panel.querySelector('#syncPw').value || '' });
+      const err = (t) => { panel.querySelector('#syncErr').textContent = t; };
       panel.querySelector('#syncClose').onclick = () => panel.classList.remove('show');
-      panel.querySelector('#syncSend').onclick = async () => {
-        const email = (panel.querySelector('#syncEmail').value || '').trim();
-        if (!email) { panel.querySelector('#syncErr').textContent = '請輸入 email'; return; }
-        panel.querySelector('#syncErr').textContent = '寄送中…';
-        try {
-          const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
-          if (error) panel.querySelector('#syncErr').textContent = '寄送失敗：' + error.message;
-          else { panel.querySelector('#syncErr').textContent = ''; panel.querySelector('.np-msg').innerHTML = '已寄出 ✉️ 到 ' + esc(email) + '<br>去收信、點連結就會登入。'; }
-        } catch (e) { panel.querySelector('#syncErr').textContent = '寄送失敗，稍後再試'; }
+      panel.querySelector('#syncIn').onclick = async () => {
+        const { email, password } = creds();
+        if (!email || !password) { err('請輸入 email 和密碼'); return; }
+        err('登入中…');
+        try { const { error } = await sb.auth.signInWithPassword({ email, password });
+          if (error) err('登入失敗：' + error.message + '（第一次用請按下面「註冊」）'); else panel.classList.remove('show');
+        } catch (e) { err('登入失敗，稍後再試'); }
+      };
+      panel.querySelector('#syncUp').onclick = async () => {
+        const { email, password } = creds();
+        if (!email || password.length < 6) { err('email 要填，密碼至少 6 位'); return; }
+        err('註冊中…');
+        try { const { data, error } = await sb.auth.signUp({ email, password });
+          if (error) { err('註冊失敗：' + error.message); return; }
+          if (data && data.session) panel.classList.remove('show');
+          else err('註冊成功，但專案還開著「Email 確認」——請在 Supabase 關掉它再登入。');
+        } catch (e) { err('註冊失敗，稍後再試'); }
       };
     }
     panel.classList.add('show');
