@@ -176,6 +176,10 @@
   .anki-top > span { font-size: 15px; font-weight: 700; }
   .anki-back { background: transparent; border: none; color: var(--accent); font-size: 15px; font-weight: 700; cursor: pointer; }
   .anki-count { font-size: 13px; color: var(--muted); font-weight: 700; }
+  .anki-levels { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); justify-content: center; }
+  .anki-lvlabel { font-size: 12px; color: var(--muted); font-weight: 700; margin-right: 2px; }
+  .anki-lvchip { font-size: 13px; font-weight: 800; padding: 5px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
+  .anki-lvchip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .anki-body { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 20px; max-width: 480px; width: 100%; margin: 0 auto; box-sizing: border-box; overflow-y: auto; }
   .anki-card { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 34px 22px; min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; box-shadow: 0 12px 34px rgba(0,0,0,.12); }
   .anki-lv { font-size: 13px; font-weight: 800; color: #fff; background: var(--accent); border-radius: 999px; padding: 2px 12px; }
@@ -1352,14 +1356,28 @@ async function exportNote(L) {
   function loadDaily() { let o = {}; try { o = JSON.parse(localStorage.getItem(DKEY) || '{}'); } catch (e) {} if (o.date !== todayStr()) o = { date: todayStr(), newCount: 0 }; return o; }
   function saveDaily() { try { localStorage.setItem(DKEY, JSON.stringify(daily)); } catch (e) {} }
   let state, daily, queue, cur, flipped;
+  // 級別複選：只影響「新卡」要從哪些級別抽；已在複習排程裡的卡不受影響（見 buildQueue）
+  const LKEY = 'dj_anki_levels';
+  const deckLevels = () => LEVEL_ORDER.filter(lv => VOCAB_DECK.some(c => c.level === lv));
+  function loadLevels() {
+    const avail = deckLevels();
+    let sel = null;
+    try { sel = JSON.parse(localStorage.getItem(LKEY) || 'null'); } catch (e) {}
+    if (!Array.isArray(sel)) sel = avail.slice();     // 預設＝deck 現有的全部級別（維持原本行為）
+    sel = sel.filter(lv => avail.includes(lv));       // 濾掉已不存在的級別
+    if (!sel.length) sel = avail.slice();             // 全被濾掉就回全部
+    return sel;
+  }
+  function saveLevels(arr) { try { localStorage.setItem(LKEY, JSON.stringify(arr)); } catch (e) {} }
 
   function buildQueue() {
     state = load(); daily = loadDaily();
+    const lvSel = loadLevels();
     const now = Date.now(), learn = [], rev = [], fresh = [];
     VOCAB_DECK.forEach(c => {
       const st = state[keyOf(c)];
-      if (!st) fresh.push(c);
-      else if ((st.phase === 'learning' || st.phase === 'relearning') && st.due <= now) learn.push(c);
+      if (!st) { if (lvSel.includes(c.level)) fresh.push(c); }   // 新卡：只從選的級別抽
+      else if ((st.phase === 'learning' || st.phase === 'relearning') && st.due <= now) learn.push(c);  // 已學過的照複習，不看級別
       else if (st.phase === 'review' && st.due <= now) rev.push(c);
     });
     const newBudget = Math.max(0, NEW_PER_DAY - daily.newCount);   // 今日還能背幾個新字
@@ -1451,9 +1469,29 @@ async function exportNote(L) {
     });
     count();
   }
+  function renderLevelBar() {
+    const bar = panel.querySelector('.anki-levels'); if (!bar) return;
+    const avail = deckLevels(), sel = loadLevels();
+    if (avail.length <= 1) { bar.style.display = 'none'; return; }   // 只有一個級別就不顯示
+    bar.innerHTML = '<span class="anki-lvlabel">新字級別</span>' + avail.map(lv =>
+      '<button type="button" class="anki-lvchip' + (sel.includes(lv) ? ' on' : '') + '" data-lv="' + lv + '">' + lv + '</button>'
+    ).join('');
+    bar.querySelectorAll('.anki-lvchip').forEach(b => {
+      b.onclick = () => {
+        const lv = b.getAttribute('data-lv');
+        let s = loadLevels();
+        if (s.includes(lv)) { if (s.length <= 1) return; s = s.filter(x => x !== lv); }  // 至少留 1 級
+        else s = avail.filter(x => s.includes(x) || x === lv);   // 保持 LEVEL_ORDER 順序
+        saveLevels(s);
+        renderLevelBar();
+        buildQueue(); cur = 0; flipped = false; render();
+      };
+    });
+  }
   function open() {
-    panel.innerHTML = '<div class="anki-top"><button class="anki-back" id="ankiBack" type="button">← 回文章</button><span>單字測驗 · Anki</span><span class="anki-count"></span></div><div class="anki-body"></div>';
+    panel.innerHTML = '<div class="anki-top"><button class="anki-back" id="ankiBack" type="button">← 回文章</button><span>單字測驗 · Anki</span><span class="anki-count"></span></div><div class="anki-levels"></div><div class="anki-body"></div>';
     panel.querySelector('#ankiBack').onclick = () => { speech.stop(); panel.classList.remove('show'); };
+    renderLevelBar();
     buildQueue(); cur = 0; flipped = false;
     panel.classList.add('show'); render();
   }
