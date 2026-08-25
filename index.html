@@ -1374,12 +1374,14 @@ async function exportNote(L) {
     state = load(); daily = loadDaily();
     const lvSel = loadLevels();
     const now = Date.now(), learn = [], rev = [], fresh = [];
+    const ahead = now + 20 * MIN;   // learn-ahead：學習/重學卡在 20 分鐘內到期就先收進來（＝按「再來」後離開再重開也看得到）
     VOCAB_DECK.forEach(c => {
       const st = state[keyOf(c)];
       if (!st) { if (lvSel.includes(c.level)) fresh.push(c); }   // 新卡：只從選的級別抽
-      else if ((st.phase === 'learning' || st.phase === 'relearning') && st.due <= now) learn.push(c);  // 已學過的照複習，不看級別
+      else if ((st.phase === 'learning' || st.phase === 'relearning') && st.due <= ahead) learn.push(c);  // 已學過的照複習，不看級別
       else if (st.phase === 'review' && st.due <= now) rev.push(c);
     });
+    learn.sort((a, b) => (state[keyOf(a)].due || 0) - (state[keyOf(b)].due || 0));   // 早到期的先出
     const newBudget = Math.max(0, NEW_PER_DAY - daily.newCount);   // 今日還能背幾個新字
     sh(rev); sh(fresh);
     queue = learn.concat(rev.slice(0, REVIEW_PER_DAY)).concat(fresh.slice(0, newBudget));
