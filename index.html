@@ -180,6 +180,9 @@
   .anki-lvlabel { font-size: 12px; color: var(--muted); font-weight: 700; margin-right: 2px; }
   .anki-lvchip { font-size: 13px; font-weight: 800; padding: 5px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
   .anki-lvchip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .anki-modebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); justify-content: center; }
+  .anki-modechip { font-size: 13px; font-weight: 800; padding: 5px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
+  .anki-modechip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .anki-body { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 20px; max-width: 480px; width: 100%; margin: 0 auto; box-sizing: border-box; overflow-y: auto; }
   .anki-card { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 34px 22px; min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; box-shadow: 0 12px 34px rgba(0,0,0,.12); }
   .anki-lv { font-size: 13px; font-weight: 800; color: #fff; background: var(--accent); border-radius: 999px; padding: 2px 12px; }
@@ -1359,7 +1362,7 @@ async function exportNote(L) {
   const btn = $('ankiBtn');
   if (!btn) return;
   const panel = document.createElement('div'); panel.className = 'anki'; document.body.appendChild(panel);
-  const SKEY = 'dj_anki', DKEY = 'dj_anki_daily', MIN = 60000, DAY = 86400000;
+  const SKEY = 'dj_anki', SKEY_ZH = 'dj_anki_zh', MKEY = 'dj_anki_mode', DKEY = 'dj_anki_daily', MIN = 60000, DAY = 86400000;
   // Anki 預設值（查證自 Anki 演算法）：每日新卡 20、學習步驟 1分/10分、畢業 1天、簡單 4天、
   // 起始 ease 2.5、Hard×1.2(ease−0.15)、Good×ease、Easy×ease×1.3(ease+0.15)、Again 重學(ease−0.2)。
   const NEW_PER_DAY = 20, REVIEW_PER_DAY = 200;
@@ -1367,8 +1370,15 @@ async function exportNote(L) {
   const START_EASE = 2.5, EASE_MIN = 1.3, HARD_MULT = 1.2, EASY_BONUS = 1.3, LAPSE_MULT = 0.1, MAX_IV = 36500;
   const keyOf = (c) => c.word + '|' + c.reading;
   const rubyA = (s) => bold(esc(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '<ruby>$1<rt>$2</rt></ruby>'));
-  const load = () => { try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch (e) { return {}; } };
-  const save = (s) => { try { localStorage.setItem(SKEY, JSON.stringify(s)); } catch (e) {} };
+  // 中/日雙模式：兩張獨立 SRS 狀態表（dj_anki＝日文模式、dj_anki_zh＝中文模式），同 key(word|reading)
+  const getMode = () => { try { return localStorage.getItem(MKEY) === 'zh' ? 'zh' : 'jp'; } catch (e) { return 'jp'; } };
+  const setMode = (m) => { try { localStorage.setItem(MKEY, m === 'zh' ? 'zh' : 'jp'); } catch (e) {} };
+  const skeyOf = (m) => m === 'zh' ? SKEY_ZH : SKEY;
+  const loadMap = (m) => { try { return JSON.parse(localStorage.getItem(skeyOf(m)) || '{}'); } catch (e) { return {}; } };
+  const saveMap = (m, s) => { try { localStorage.setItem(skeyOf(m), JSON.stringify(s)); } catch (e) {} };
+  const load = () => loadMap(getMode());          // 目前模式的狀態表
+  const save = (s) => saveMap(getMode(), s);
+  const anyDue = (map) => { const now = Date.now(); for (const k in map) { const s = map[k]; if (!s) continue; if ((s.phase === 'learning' || s.phase === 'relearning' || s.phase === 'review') && s.due <= now) return true; } return false; };
   // 單字配圖：只存「word|reading → {url,source,license,by}」對照表（dj_ 前綴→自動雲端同步；圖本體存 Supabase 圖床）
   const IMGKEY = 'dj_vocab_img';
   const loadImgs = () => { try { return JSON.parse(localStorage.getItem(IMGKEY) || '{}'); } catch (e) { return {}; } };
@@ -1406,7 +1416,9 @@ async function exportNote(L) {
       else if (st.phase === 'review' && st.due <= now) rev.push(c);
     });
     learn.sort((a, b) => (state[keyOf(a)].due || 0) - (state[keyOf(b)].due || 0));   // 早到期的先出
-    const newBudget = Math.max(0, NEW_PER_DAY - daily.newCount);   // 今日還能背幾個新字
+    // 新字閘門：兩模式（日/中）只要任一還有到期卡就不發新字 → 共用批次、兩邊清完才發下一批、隔日同步
+    const gateOpen = !anyDue(loadMap('jp')) && !anyDue(loadMap('zh'));
+    const newBudget = gateOpen ? Math.max(0, NEW_PER_DAY - daily.newCount) : 0;
     sh(rev); sh(fresh);
     queue = learn.concat(rev.slice(0, REVIEW_PER_DAY)).concat(fresh.slice(0, newBudget));
   }
@@ -1436,7 +1448,12 @@ async function exportNote(L) {
   function schedule(c, r) {
     const k = keyOf(c), now = Date.now();
     let st = state[k];
-    if (!st) { daily.newCount++; saveDaily(); st = { phase: 'learning', step: 0, reps: 0 }; }   // 首次出現＝新字，計入今日新字
+    if (!st) {
+      daily.newCount++; saveDaily(); st = { phase: 'learning', step: 0, reps: 0 };   // 首次出現＝新字，計入今日新字（兩模式共用）
+      const om = getMode() === 'jp' ? 'zh' : 'jp';                                    // 同一批字：同時種進另一模式（due=now→那邊也待背）
+      const omap = loadMap(om);
+      if (!omap[k]) { omap[k] = { phase: 'learning', step: 0, reps: 0, due: now }; saveMap(om, omap); }
+    }
     if (st.phase === 'learning') {
       if (r === 'again') { st.step = 0; st.due = now + LEARN_STEPS[0] * MIN; }
       else if (r === 'hard') { st.due = now + Math.round((LEARN_STEPS[st.step || 0] || 1) * 1.5) * MIN; }
@@ -1465,28 +1482,39 @@ async function exportNote(L) {
   function count() { const el = panel.querySelector('.anki-count'); if (el) el.textContent = '剩 ' + queue.length + '（新字 ' + daily.newCount + '/' + NEW_PER_DAY + '）'; }
   function render() {
     const body = panel.querySelector('.anki-body');
+    if (!queue.length) { buildQueue(); cur = 0; }   // 清完到期卡→重建：閘門開了就補新字
     if (!queue.length) {
       body.innerHTML = '<div class="anki-done">🎉 今天的字都複習完了！<br>今日新字 ' + daily.newCount + '/' + NEW_PER_DAY + '，到期的字之後會再出現。</div>';
       count(); return;
     }
     const c = queue[cur];
     const im = imgOf(c);
-    let h = '<div class="anki-card">' +
-      '<div class="anki-lv">' + esc(c.level || '?') + '</div>' +
-      (im && im.url ? '<img class="anki-img" loading="lazy" src="' + esc(im.url) + '" alt="">' : '') +
-      '<div class="anki-word">' + esc(c.word) + '</div>' +
-      '<button class="anki-say" id="aSay" type="button">🔊</button>';
-    if (flipped) {
-      h += '<div class="anki-reading">' + esc(c.reading) + '</div>' +
-        '<div style="width:60%;height:1px;background:var(--line);margin:6px 0"></div>' +
-        '<div class="anki-zh">' + esc(c.zh) + '</div>' +
-        (c.example ? '<div class="anki-ex">' + rubyA(c.example) + '<button class="anki-ex-say" id="aExSay" type="button">🔊</button></div>' : '') +
-        (c.example_zh ? '<div class="anki-exzh">' + esc(c.example_zh) + '</div>' : '') +
-        '<div class="anki-imgrow">' +
-          '<button class="anki-imgbtn" id="aImg" type="button">🖼 ' + (im ? '換圖片' : '加圖片') + '</button>' +
-          (im ? '<button class="anki-imgbtn" id="aImgDel" type="button">🗑 移除圖片</button>' : '') +
-        '</div>' +
-        (im && im.source ? '<div class="anki-imgcredit"><a href="' + esc(im.source) + '" target="_blank" rel="noopener">圖片來源' + (im.license ? '（' + esc(im.license) + '）' : '') + '</a></div>' : '');
+    const jp = getMode() === 'jp';
+    const divider = '<div style="width:60%;height:1px;background:var(--line);margin:6px 0"></div>';
+    const imgTag = (im && im.url ? '<img class="anki-img" loading="lazy" src="' + esc(im.url) + '" alt="">' : '');
+    const exBlock = (c.example ? '<div class="anki-ex">' + rubyA(c.example) + '<button class="anki-ex-say" id="aExSay" type="button">🔊</button></div>' : '') +
+      (c.example_zh ? '<div class="anki-exzh">' + esc(c.example_zh) + '</div>' : '');
+    const imgManage = '<div class="anki-imgrow">' +
+        '<button class="anki-imgbtn" id="aImg" type="button">🖼 ' + (im ? '換圖片' : '加圖片') + '</button>' +
+        (im ? '<button class="anki-imgbtn" id="aImgDel" type="button">🗑 移除圖片</button>' : '') +
+      '</div>' +
+      (im && im.source ? '<div class="anki-imgcredit"><a href="' + esc(im.source) + '" target="_blank" rel="noopener">圖片來源' + (im.license ? '（' + esc(im.license) + '）' : '') + '</a></div>' : '');
+    let h = '<div class="anki-card"><div class="anki-lv">' + esc(c.level || '?') + '</div>';
+    if (jp) {
+      // 日文模式：正面 日文單字（＋圖在上方）；翻開 讀音／中文／例句
+      h += imgTag + '<div class="anki-word">' + esc(c.word) + '</div><button class="anki-say" id="aSay" type="button">🔊</button>';
+      if (flipped) {
+        h += '<div class="anki-reading">' + esc(c.reading) + '</div>' + divider +
+          '<div class="anki-zh">' + esc(c.zh) + '</div>' + exBlock + imgManage;
+      }
+    } else {
+      // 中文模式：正面 中文意思（不放圖以免洩題）；翻開 日文單字＋讀音（＋圖）＋例句
+      h += '<div class="anki-zh">' + esc(c.zh) + '</div>';
+      if (flipped) {
+        h += divider + imgTag + '<div class="anki-word">' + esc(c.word) + '</div>' +
+          '<div class="anki-reading">' + esc(c.reading) + '</div>' +
+          '<button class="anki-say" id="aSay" type="button">🔊</button>' + exBlock + imgManage;
+      }
     }
     h += '</div>';
     if (flipped) {
@@ -1530,6 +1558,17 @@ async function exportNote(L) {
         renderLevelBar();
         buildQueue(); cur = 0; flipped = false; render();
       };
+    });
+  }
+  function renderModeBar() {
+    const bar = panel.querySelector('.anki-modebar'); if (!bar) return;
+    const m = getMode();
+    bar.innerHTML = '<span class="anki-lvlabel">方向</span>' +
+      '<button type="button" class="anki-modechip' + (m === 'jp' ? ' on' : '') + '" data-m="jp">日文→中文</button>' +
+      '<button type="button" class="anki-modechip' + (m === 'zh' ? ' on' : '') + '" data-m="zh">中文→日文</button>';
+    bar.querySelectorAll('.anki-modechip').forEach(b => b.onclick = () => {
+      const nm = b.getAttribute('data-m'); if (nm === getMode()) return;
+      setMode(nm); renderModeBar(); buildQueue(); cur = 0; flipped = false; render();
     });
   }
   let imgOv = null;
@@ -1592,8 +1631,9 @@ async function exportNote(L) {
     doSearch();
   }
   function open() {
-    panel.innerHTML = '<div class="anki-top"><button class="anki-back" id="ankiBack" type="button">← 回文章</button><span>單字測驗 · Anki</span><span class="anki-count"></span></div><div class="anki-levels"></div><div class="anki-body"></div>';
+    panel.innerHTML = '<div class="anki-top"><button class="anki-back" id="ankiBack" type="button">← 回文章</button><span>單字測驗 · Anki</span><span class="anki-count"></span></div><div class="anki-modebar"></div><div class="anki-levels"></div><div class="anki-body"></div>';
     panel.querySelector('#ankiBack').onclick = () => { speech.stop(); panel.classList.remove('show'); };
+    renderModeBar();
     renderLevelBar();
     buildQueue(); cur = 0; flipped = false;
     panel.classList.add('show'); render();
