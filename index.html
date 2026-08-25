@@ -183,6 +183,24 @@
   .anki-body { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 20px; max-width: 480px; width: 100%; margin: 0 auto; box-sizing: border-box; overflow-y: auto; }
   .anki-card { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 34px 22px; min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; box-shadow: 0 12px 34px rgba(0,0,0,.12); }
   .anki-lv { font-size: 13px; font-weight: 800; color: #fff; background: var(--accent); border-radius: 999px; padding: 2px 12px; }
+  .anki-img { max-width: 100%; max-height: 150px; border-radius: 12px; object-fit: contain; }
+  .anki-imgrow { display: flex; gap: 8px; justify-content: center; margin-top: 6px; }
+  .anki-imgbtn { font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
+  .anki-imgcredit { font-size: 11px; color: var(--muted); }
+  .anki-imgcredit a { color: var(--muted); }
+  .imgov { position: fixed; inset: 0; z-index: 200; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.5); padding: 16px; }
+  .imgov.show { display: flex; }
+  .imgov-card { background: var(--bg); border: 1px solid var(--line); border-radius: 16px; padding: 16px; width: 100%; max-width: 460px; max-height: 85vh; display: flex; flex-direction: column; gap: 10px; box-sizing: border-box; }
+  .imgov-title { font-size: 16px; font-weight: 800; }
+  .imgov-warn { font-size: 13px; color: var(--bad); background: var(--bad-soft); border-radius: 8px; padding: 8px 10px; }
+  .imgov-search { display: flex; gap: 8px; }
+  .imgov-search input { flex: 1; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 15px; }
+  .imgov-search button { padding: 10px 16px; border-radius: 10px; border: none; background: var(--accent); color: #fff; font-weight: 800; cursor: pointer; }
+  .imgov-status { font-size: 13px; color: var(--muted); }
+  .imgov-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; overflow-y: auto; }
+  .imgov-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; cursor: pointer; border: 2px solid transparent; }
+  .imgov-grid img.sel { border-color: var(--accent); opacity: .6; }
+  .imgov-x { padding: 12px; border-radius: 10px; border: none; background: var(--surface); color: var(--ink); font-weight: 700; cursor: pointer; border: 1px solid var(--line); }
   .anki-word { font-size: 40px; font-weight: 800; line-height: 1.25; }
   .anki-reading { font-size: 20px; color: var(--muted); }
   .anki-say { width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--accent-soft); color: var(--accent); font-size: 20px; cursor: pointer; }
@@ -1351,6 +1369,12 @@ async function exportNote(L) {
   const rubyA = (s) => bold(esc(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '<ruby>$1<rt>$2</rt></ruby>'));
   const load = () => { try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch (e) { return {}; } };
   const save = (s) => { try { localStorage.setItem(SKEY, JSON.stringify(s)); } catch (e) {} };
+  // 單字配圖：只存「word|reading → {url,source,license,by}」對照表（dj_ 前綴→自動雲端同步；圖本體存 Supabase 圖床）
+  const IMGKEY = 'dj_vocab_img';
+  const loadImgs = () => { try { return JSON.parse(localStorage.getItem(IMGKEY) || '{}'); } catch (e) { return {}; } };
+  const saveImgs = (m) => { try { localStorage.setItem(IMGKEY, JSON.stringify(m)); } catch (e) {} };
+  const imgOf = (c) => loadImgs()[keyOf(c)];
+  const hstr = (s) => { let h = 5381; for (let i = 0; i < s.length; i++) { h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; } return h.toString(36); };
   const sh = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
   const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
   function loadDaily() { let o = {}; try { o = JSON.parse(localStorage.getItem(DKEY) || '{}'); } catch (e) {} if (o.date !== todayStr()) o = { date: todayStr(), newCount: 0 }; return o; }
@@ -1446,8 +1470,10 @@ async function exportNote(L) {
       count(); return;
     }
     const c = queue[cur];
+    const im = imgOf(c);
     let h = '<div class="anki-card">' +
       '<div class="anki-lv">' + esc(c.level || '?') + '</div>' +
+      (im && im.url ? '<img class="anki-img" loading="lazy" src="' + esc(im.url) + '" alt="">' : '') +
       '<div class="anki-word">' + esc(c.word) + '</div>' +
       '<button class="anki-say" id="aSay" type="button">🔊</button>';
     if (flipped) {
@@ -1455,7 +1481,12 @@ async function exportNote(L) {
         '<div style="width:60%;height:1px;background:var(--line);margin:6px 0"></div>' +
         '<div class="anki-zh">' + esc(c.zh) + '</div>' +
         (c.example ? '<div class="anki-ex">' + rubyA(c.example) + '<button class="anki-ex-say" id="aExSay" type="button">🔊</button></div>' : '') +
-        (c.example_zh ? '<div class="anki-exzh">' + esc(c.example_zh) + '</div>' : '');
+        (c.example_zh ? '<div class="anki-exzh">' + esc(c.example_zh) + '</div>' : '') +
+        '<div class="anki-imgrow">' +
+          '<button class="anki-imgbtn" id="aImg" type="button">🖼 ' + (im ? '換圖片' : '加圖片') + '</button>' +
+          (im ? '<button class="anki-imgbtn" id="aImgDel" type="button">🗑 移除圖片</button>' : '') +
+        '</div>' +
+        (im && im.source ? '<div class="anki-imgcredit"><a href="' + esc(im.source) + '" target="_blank" rel="noopener">圖片來源' + (im.license ? '（' + esc(im.license) + '）' : '') + '</a></div>' : '');
     }
     h += '</div>';
     if (flipped) {
@@ -1471,6 +1502,8 @@ async function exportNote(L) {
     const sy = panel.querySelector('#aSay'); if (sy) sy.onclick = () => speech.speak(c.reading, null, vocabSpeed.get());
     const ex = panel.querySelector('#aExSay'); if (ex) ex.onclick = () => speech.speak(kanaOf(c.example), null, vocabSpeed.get());
     const sw = panel.querySelector('#ankiShow'); if (sw) sw.onclick = () => { flipped = true; render(); };
+    const ib = panel.querySelector('#aImg'); if (ib) ib.onclick = () => openImgSearch(c);
+    const idel = panel.querySelector('#aImgDel'); if (idel) idel.onclick = () => { const m = loadImgs(); delete m[keyOf(c)]; saveImgs(m); render(); };
     panel.querySelectorAll('.anki-actions [data-r]').forEach(b => b.onclick = () => {
       const st = schedule(c, b.dataset.r);
       queue.splice(cur, 1);
@@ -1499,6 +1532,65 @@ async function exportNote(L) {
       };
     });
   }
+  let imgOv = null;
+  function ensureOverlay() {
+    if (imgOv) return imgOv;
+    imgOv = document.createElement('div'); imgOv.className = 'imgov';
+    document.body.appendChild(imgOv);
+    imgOv.addEventListener('click', (e) => { if (e.target === imgOv) imgOv.classList.remove('show'); });
+    return imgOv;
+  }
+  function openImgSearch(c) {
+    const api = (typeof window.djSupa === 'function') ? window.djSupa() : null;
+    const loggedIn = !!(api && api.user);
+    const ov = ensureOverlay();
+    ov.innerHTML = '<div class="imgov-card">' +
+      '<div class="imgov-title">為「' + esc(c.word) + '」找圖片</div>' +
+      (loggedIn ? '' : '<div class="imgov-warn">要先登入雲端同步才能存圖片（回文章後點右下角 ☁️ 登入）。</div>') +
+      '<div class="imgov-search"><input id="imgq" type="text" placeholder="搜尋關鍵字（英文命中最準）"><button id="imggo" type="button">搜尋</button></div>' +
+      '<div class="imgov-status" id="imgstat"></div>' +
+      '<div class="imgov-grid" id="imggrid"></div>' +
+      '<button class="imgov-x" id="imgclose" type="button">關閉</button>' +
+      '</div>';
+    const q = ov.querySelector('#imgq'); q.value = c.zh || c.word;
+    const stat = ov.querySelector('#imgstat'), grid = ov.querySelector('#imggrid');
+    ov.querySelector('#imgclose').onclick = () => ov.classList.remove('show');
+    async function doSearch() {
+      const term = (q.value || '').trim(); if (!term) return;
+      grid.innerHTML = ''; stat.textContent = '搜尋中…';
+      try {
+        const r = await fetch('https://api.openverse.org/v1/images/?q=' + encodeURIComponent(term) + '&page_size=20&mature=false');
+        if (!r.ok) { stat.textContent = (r.status === 429 ? '搜尋太頻繁，請稍等一下再試。' : '搜尋暫時無法使用（' + r.status + '）。'); return; }
+        const j = await r.json(); const results = (j.results || []).filter(x => x.thumbnail);
+        if (!results.length) { stat.textContent = '找不到圖片，換個關鍵字（建議用英文）。'; return; }
+        stat.textContent = loggedIn ? '點一張圖存起來' : '（未登入，點圖無法儲存）';
+        grid.innerHTML = '';
+        results.forEach(res => {
+          const im = document.createElement('img'); im.src = res.thumbnail; im.loading = 'lazy'; im.alt = res.title || '';
+          im.onclick = () => pick(res, im);
+          grid.appendChild(im);
+        });
+      } catch (e) { stat.textContent = '搜尋失敗，稍後再試。'; }
+    }
+    async function pick(res, imEl) {
+      if (!loggedIn) { stat.textContent = '請先登入雲端同步再存圖片。'; return; }
+      const sb = api.sb, user = api.user;
+      stat.textContent = '儲存中…'; imEl.classList.add('sel');
+      try {
+        const blob = await (await fetch(res.thumbnail)).blob();
+        const path = user.id + '/' + hstr(keyOf(c)) + '.jpg';
+        const up = await sb.storage.from('vocab-img').upload(path, blob, { upsert: true, contentType: blob.type || 'image/jpeg' });
+        if (up.error) throw up.error;
+        const url = sb.storage.from('vocab-img').getPublicUrl(path).data.publicUrl + '?t=' + Date.now();
+        const m = loadImgs(); m[keyOf(c)] = { url: url, source: res.foreign_landing_url || res.url || '', license: res.license || '', by: res.creator || '' }; saveImgs(m);
+        ov.classList.remove('show'); render();
+      } catch (e) { stat.textContent = '儲存失敗：' + (e.message || e); imEl.classList.remove('sel'); }
+    }
+    ov.querySelector('#imggo').onclick = doSearch;
+    q.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+    ov.classList.add('show');
+    doSearch();
+  }
   function open() {
     panel.innerHTML = '<div class="anki-top"><button class="anki-back" id="ankiBack" type="button">← 回文章</button><span>單字測驗 · Anki</span><span class="anki-count"></span></div><div class="anki-levels"></div><div class="anki-body"></div>';
     panel.querySelector('#ankiBack').onclick = () => { speech.stop(); panel.classList.remove('show'); };
@@ -1517,6 +1609,7 @@ async function exportNote(L) {
   const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
   const SYNC_KEY = (k) => /^dj_/.test(k) && k !== 'dj_unlocked' && k !== 'dj_last_ts';
   let user = null, pushTimer = null;
+  window.djSupa = () => ({ sb: sb, user: user });   // 給 Anki 圖片模組取用（登入後才有 user）
 
   const btn = document.createElement('button');
   btn.className = 'syncbtn'; btn.type = 'button'; btn.textContent = '☁️ 登入雲端同步';
