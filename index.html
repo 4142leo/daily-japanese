@@ -1595,6 +1595,15 @@ async function exportNote(L) {
     imgOv.addEventListener('click', (e) => { if (e.target === imgOv) imgOv.classList.remove('show'); });
     return imgOv;
   }
+  // Openverse 是英文索引：搜尋前把中/日文自動轉英文（沿用選字翻譯同一個 Google 端點，自動偵測來源語言）
+  async function toEnglish(text) {
+    try {
+      const g = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=' + encodeURIComponent(text);
+      const r = await fetch(g);
+      if (r.ok) { const d = await r.json(); const tt = (d[0] || []).map(x => x[0]).join('').trim(); if (tt) return tt; }
+    } catch (e) {}
+    return text;   // 轉不動就用原字
+  }
   function openImgSearch(c) {
     const api = (typeof window.djSupa === 'function') ? window.djSupa() : null;
     const loggedIn = !!(api && api.user);
@@ -1602,7 +1611,7 @@ async function exportNote(L) {
     ov.innerHTML = '<div class="imgov-card">' +
       '<div class="imgov-title">為「' + esc(c.word) + '」找圖片</div>' +
       (loggedIn ? '' : '<div class="imgov-warn">要先登入雲端同步才能存圖片（回文章後點右下角 ☁️ 登入）。</div>') +
-      '<div class="imgov-search"><input id="imgq" type="text" placeholder="搜尋關鍵字（英文命中最準）"><button id="imggo" type="button">搜尋</button></div>' +
+      '<div class="imgov-search"><input id="imgq" type="text" placeholder="中文或英文都行（會自動轉英文搜）"><button id="imggo" type="button">搜尋</button></div>' +
       '<div class="imgov-status" id="imgstat"></div>' +
       '<div class="imgov-grid" id="imggrid"></div>' +
       '<button class="imgov-x" id="imgclose" type="button">關閉</button>' +
@@ -1611,8 +1620,11 @@ async function exportNote(L) {
     const stat = ov.querySelector('#imgstat'), grid = ov.querySelector('#imggrid');
     ov.querySelector('#imgclose').onclick = () => ov.classList.remove('show');
     async function doSearch() {
-      const term = (q.value || '').trim(); if (!term) return;
-      grid.innerHTML = ''; stat.textContent = '搜尋中…';
+      const raw = (q.value || '').trim(); if (!raw) return;
+      grid.innerHTML = '';
+      let term = raw;
+      if (/[^\x00-\x7F]/.test(raw)) { stat.textContent = '轉英文中…'; term = await toEnglish(raw); }   // 有中/日文→先自動轉英文
+      stat.textContent = '搜尋「' + term + '」中…';
       try {
         const r = await fetch('https://api.openverse.org/v1/images/?q=' + encodeURIComponent(term) + '&page_size=20&mature=false');
         if (!r.ok) { stat.textContent = (r.status === 429 ? '搜尋太頻繁，請稍等一下再試。' : '搜尋暫時無法使用（' + r.status + '）。'); return; }
