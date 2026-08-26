@@ -1362,7 +1362,7 @@ async function exportNote(L) {
   const btn = $('ankiBtn');
   if (!btn) return;
   const panel = document.createElement('div'); panel.className = 'anki'; document.body.appendChild(panel);
-  const SKEY = 'dj_anki', SKEY_ZH = 'dj_anki_zh', MKEY = 'dj_anki_mode', DKEY = 'dj_anki_daily', MIN = 60000, DAY = 86400000;
+  const SKEY = 'dj_anki', MKEY = 'dj_anki_mode', ZDKEY = 'dj_anki_zh_done', DKEY = 'dj_anki_daily', MIN = 60000, DAY = 86400000;
   // Anki 預設值（查證自 Anki 演算法）：每日新卡 20、學習步驟 1分/10分、畢業 1天、簡單 4天、
   // 起始 ease 2.5、Hard×1.2(ease−0.15)、Good×ease、Easy×ease×1.3(ease+0.15)、Again 重學(ease−0.2)。
   const NEW_PER_DAY = 20, REVIEW_PER_DAY = 200;
@@ -1370,15 +1370,14 @@ async function exportNote(L) {
   const START_EASE = 2.5, EASE_MIN = 1.3, HARD_MULT = 1.2, EASY_BONUS = 1.3, LAPSE_MULT = 0.1, MAX_IV = 36500;
   const keyOf = (c) => c.word + '|' + c.reading;
   const rubyA = (s) => bold(esc(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '<ruby>$1<rt>$2</rt></ruby>'));
-  // 中/日雙模式：兩張獨立 SRS 狀態表（dj_anki＝日文模式、dj_anki_zh＝中文模式），同 key(word|reading)
+  // 雙模式：日文模式＝唯一排程主牌組（dj_anki）；中文模式＝每天鏡射「當日日文模式的字」、反向再練，不影響排程
   const getMode = () => { try { return localStorage.getItem(MKEY) === 'zh' ? 'zh' : 'jp'; } catch (e) { return 'jp'; } };
   const setMode = (m) => { try { localStorage.setItem(MKEY, m === 'zh' ? 'zh' : 'jp'); } catch (e) {} };
-  const skeyOf = (m) => m === 'zh' ? SKEY_ZH : SKEY;
-  const loadMap = (m) => { try { return JSON.parse(localStorage.getItem(skeyOf(m)) || '{}'); } catch (e) { return {}; } };
-  const saveMap = (m, s) => { try { localStorage.setItem(skeyOf(m), JSON.stringify(s)); } catch (e) {} };
-  const load = () => loadMap(getMode());          // 目前模式的狀態表
-  const save = (s) => saveMap(getMode(), s);
-  const anyDue = (map) => { const now = Date.now(); for (const k in map) { const s = map[k]; if (!s) continue; if ((s.phase === 'learning' || s.phase === 'relearning' || s.phase === 'review') && s.due <= now) return true; } return false; };
+  const load = () => { try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch (e) { return {}; } };
+  const save = (s) => { try { localStorage.setItem(SKEY, JSON.stringify(s)); } catch (e) {} };
+  // 中文模式當天已完成哪些字（只記完成、不改排程；每天重置）
+  function loadZhDone() { let o = {}; try { o = JSON.parse(localStorage.getItem(ZDKEY) || '{}'); } catch (e) {} if (o.date !== todayStr()) o = { date: todayStr(), keys: [] }; return o; }
+  function saveZhDone(o) { try { localStorage.setItem(ZDKEY, JSON.stringify(o)); } catch (e) {} }
   // 單字配圖：只存「word|reading → {url,source,license,by}」對照表（dj_ 前綴→自動雲端同步；圖本體存 Supabase 圖床）
   const IMGKEY = 'dj_vocab_img';
   const loadImgs = () => { try { return JSON.parse(localStorage.getItem(IMGKEY) || '{}'); } catch (e) { return {}; } };
@@ -1405,6 +1404,7 @@ async function exportNote(L) {
   function saveLevels(arr) { try { localStorage.setItem(LKEY, JSON.stringify(arr)); } catch (e) {} }
 
   function buildQueue() {
+    if (getMode() === 'zh') { buildQueueZh(); return; }   // 中文模式走鏡像
     state = load(); daily = loadDaily();
     const lvSel = loadLevels();
     const now = Date.now(), learn = [], rev = [], fresh = [];
@@ -1416,11 +1416,24 @@ async function exportNote(L) {
       else if (st.phase === 'review' && st.due <= now) rev.push(c);
     });
     learn.sort((a, b) => (state[keyOf(a)].due || 0) - (state[keyOf(b)].due || 0));   // 早到期的先出
-    // 新字閘門：兩模式（日/中）只要任一還有到期卡就不發新字 → 共用批次、兩邊清完才發下一批、隔日同步
-    const gateOpen = !anyDue(loadMap('jp')) && !anyDue(loadMap('zh'));
-    const newBudget = gateOpen ? Math.max(0, NEW_PER_DAY - daily.newCount) : 0;
+    const newBudget = Math.max(0, NEW_PER_DAY - daily.newCount);   // 今日還能背幾個新字
     sh(rev); sh(fresh);
     queue = learn.concat(rev.slice(0, REVIEW_PER_DAY)).concat(fresh.slice(0, newBudget));
+  }
+  // 中文模式：鏡射「當日日文模式的字」（今天到期的複習＋今天在日文模式碰過的字，含新學），反向再練一次；扣掉今天中文已完成的
+  function buildQueueZh() {
+    state = load(); daily = loadDaily();
+    const now = Date.now(), ahead = now + 20 * MIN, td = todayStr();
+    const done = loadZhDone().keys, out = [];
+    VOCAB_DECK.forEach(c => {
+      const st = state[keyOf(c)]; if (!st) return;   // 只鏡射日文已introduce的字（新字由日文模式引入）
+      const active = ((st.phase === 'learning' || st.phase === 'relearning') && st.due <= ahead)
+        || (st.phase === 'review' && st.due <= now)
+        || st.seen === td;                            // 今天在日文模式碰過（新學/複習過）的字
+      if (active && done.indexOf(keyOf(c)) === -1) out.push(c);
+    });
+    sh(out);
+    queue = out;
   }
   function preview(c, r) {
     const st = state[keyOf(c)];
@@ -1448,12 +1461,7 @@ async function exportNote(L) {
   function schedule(c, r) {
     const k = keyOf(c), now = Date.now();
     let st = state[k];
-    if (!st) {
-      daily.newCount++; saveDaily(); st = { phase: 'learning', step: 0, reps: 0 };   // 首次出現＝新字，計入今日新字（兩模式共用）
-      const om = getMode() === 'jp' ? 'zh' : 'jp';                                    // 同一批字：同時種進另一模式（due=now→那邊也待背）
-      const omap = loadMap(om);
-      if (!omap[k]) { omap[k] = { phase: 'learning', step: 0, reps: 0, due: now }; saveMap(om, omap); }
-    }
+    if (!st) { daily.newCount++; saveDaily(); st = { phase: 'learning', step: 0, reps: 0 }; }   // 首次出現＝新字，計入今日新字
     if (st.phase === 'learning') {
       if (r === 'again') { st.step = 0; st.due = now + LEARN_STEPS[0] * MIN; }
       else if (r === 'hard') { st.due = now + Math.round((LEARN_STEPS[st.step || 0] || 1) * 1.5) * MIN; }
@@ -1476,13 +1484,14 @@ async function exportNote(L) {
       else { st.ease = ease + 0.15; st.interval = Math.min(MAX_IV, Math.round(iv * ease * EASY_BONUS)); st.due = now + st.interval * DAY; }
     }
     st.reps = (st.reps || 0) + 1;
+    st.seen = todayStr();                 // 標記「今天在日文模式碰過」→ 中文模式當天鏡射得到
     state[k] = st; save(state);
     return st;
   }
   function count() { const el = panel.querySelector('.anki-count'); if (el) el.textContent = '剩 ' + queue.length + '（新字 ' + daily.newCount + '/' + NEW_PER_DAY + '）'; }
   function render() {
     const body = panel.querySelector('.anki-body');
-    if (!queue.length) { buildQueue(); cur = 0; }   // 清完到期卡→重建：閘門開了就補新字
+    if (!queue.length) { buildQueue(); cur = 0; }   // 清完後重建一次（撿還沒進佇列的到期/新卡）
     if (!queue.length) {
       body.innerHTML = '<div class="anki-done">🎉 今天的字都複習完了！<br>今日新字 ' + daily.newCount + '/' + NEW_PER_DAY + '，到期的字之後會再出現。</div>';
       count(); return;
@@ -1518,11 +1527,12 @@ async function exportNote(L) {
     }
     h += '</div>';
     if (flipped) {
+      const sub = (r) => jp ? ('<div class="anki-sub">' + preview(c, r) + '</div>') : '';   // 中文模式不排程→不顯示間隔
       h += '<div class="anki-actions four">' +
-        '<button class="a-again" data-r="again">再來<div class="anki-sub">' + preview(c, 'again') + '</div></button>' +
-        '<button class="a-hard" data-r="hard">困難<div class="anki-sub">' + preview(c, 'hard') + '</div></button>' +
-        '<button class="a-good" data-r="good">普通<div class="anki-sub">' + preview(c, 'good') + '</div></button>' +
-        '<button class="a-easy" data-r="easy">簡單<div class="anki-sub">' + preview(c, 'easy') + '</div></button></div>';
+        '<button class="a-again" data-r="again">再來' + sub('again') + '</button>' +
+        '<button class="a-hard" data-r="hard">困難' + sub('hard') + '</button>' +
+        '<button class="a-good" data-r="good">普通' + sub('good') + '</button>' +
+        '<button class="a-easy" data-r="easy">簡單' + sub('easy') + '</button></div>';
     } else {
       h += '<button class="anki-show" id="ankiShow" type="button">顯示答案</button>';
     }
@@ -1533,6 +1543,12 @@ async function exportNote(L) {
     const ib = panel.querySelector('#aImg'); if (ib) ib.onclick = () => openImgSearch(c);
     const idel = panel.querySelector('#aImgDel'); if (idel) idel.onclick = () => { const m = loadImgs(); delete m[keyOf(c)]; saveImgs(m); render(); };
     panel.querySelectorAll('.anki-actions [data-r]').forEach(b => b.onclick = () => {
+      if (getMode() === 'zh') {                       // 中文模式：只記完成、不動排程（日文才是排程主）
+        if (b.dataset.r === 'again') { queue.splice(cur, 1); queue.push(c); }   // 再來＝本輪稍後再看一次
+        else { const d = loadZhDone(); if (d.keys.indexOf(keyOf(c)) === -1) d.keys.push(keyOf(c)); saveZhDone(d); queue.splice(cur, 1); }
+        if (cur >= queue.length) cur = 0;
+        flipped = false; render(); return;
+      }
       const st = schedule(c, b.dataset.r);
       queue.splice(cur, 1);
       if (st.due - Date.now() < 20 * MIN) queue.push(c);   // 短間隔（學習/重學中）本輪稍後再出現
