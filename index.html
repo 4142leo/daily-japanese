@@ -1385,7 +1385,11 @@ async function exportNote(L) {
   const imgOf = (c) => loadImgs()[keyOf(c)];
   const hstr = (s) => { let h = 5381; for (let i = 0; i < s.length; i++) { h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; } return h.toString(36); };
   const sh = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
-  const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
+  // 換日界線＝每天凌晨 1:00（凌晨 0-1 點算前一天）：複習卡排到「某天 01:00」，那天才出，當天做完不再冒出
+  const DAY_CUT = 1;
+  const studyDayDate = (ts) => { const d = new Date(ts == null ? Date.now() : ts); if (d.getHours() < DAY_CUT) d.setDate(d.getDate() - 1); return d; };
+  const todayStr = () => { const d = studyDayDate(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
+  const dayStart = (ts) => { const d = studyDayDate(ts); d.setHours(DAY_CUT, 0, 0, 0); return d.getTime(); };   // 該學習日的 01:00
   function loadDaily() { let o = {}; try { o = JSON.parse(localStorage.getItem(DKEY) || '{}'); } catch (e) {} if (o.date !== todayStr()) o = { date: todayStr(), newCount: 0 }; return o; }
   function saveDaily() { try { localStorage.setItem(DKEY, JSON.stringify(daily)); } catch (e) {} }
   let state, daily, queue, cur, flipped;
@@ -1467,21 +1471,21 @@ async function exportNote(L) {
       else if (r === 'hard') { st.due = now + Math.round((LEARN_STEPS[st.step || 0] || 1) * 1.5) * MIN; }
       else if (r === 'good') {
         st.step = (st.step || 0) + 1;
-        if (st.step >= LEARN_STEPS.length) { st.phase = 'review'; st.ease = START_EASE; st.interval = GRAD_IV; st.due = now + GRAD_IV * DAY; }
+        if (st.step >= LEARN_STEPS.length) { st.phase = 'review'; st.ease = START_EASE; st.interval = GRAD_IV; st.due = dayStart(now) + GRAD_IV * DAY; }
         else st.due = now + LEARN_STEPS[st.step] * MIN;
-      } else { st.phase = 'review'; st.ease = START_EASE; st.interval = EASY_IV; st.due = now + EASY_IV * DAY; }
+      } else { st.phase = 'review'; st.ease = START_EASE; st.interval = EASY_IV; st.due = dayStart(now) + EASY_IV * DAY; }
     } else if (st.phase === 'relearning') {
       const riv = Math.max(1, st.interval || 1);
       if (r === 'again') { st.due = now + RELEARN_STEP * MIN; }
       else if (r === 'hard') { st.due = now + Math.round(RELEARN_STEP * 1.5) * MIN; }   // 留在重學階段（分鐘）
-      else if (r === 'good') { st.phase = 'review'; st.interval = riv; st.due = now + riv * DAY; }   // 回復複習
-      else { st.phase = 'review'; st.interval = Math.max(riv + 2, 3); st.due = now + st.interval * DAY; }   // easy：更長
+      else if (r === 'good') { st.phase = 'review'; st.interval = riv; st.due = dayStart(now) + riv * DAY; }   // 回復複習
+      else { st.phase = 'review'; st.interval = Math.max(riv + 2, 3); st.due = dayStart(now) + st.interval * DAY; }   // easy：更長
     } else {   // review（SM-2）
       const iv = st.interval || 1, ease = st.ease || START_EASE;
       if (r === 'again') { st.ease = Math.max(EASE_MIN, ease - 0.20); st.interval = Math.max(1, Math.round(iv * LAPSE_MULT)); st.phase = 'relearning'; st.due = now + RELEARN_STEP * MIN; }
-      else if (r === 'hard') { st.ease = Math.max(EASE_MIN, ease - 0.15); st.interval = Math.min(MAX_IV, Math.max(iv + 1, Math.round(iv * HARD_MULT))); st.due = now + st.interval * DAY; }
-      else if (r === 'good') { st.interval = Math.min(MAX_IV, Math.round(iv * ease)); st.due = now + st.interval * DAY; }
-      else { st.ease = ease + 0.15; st.interval = Math.min(MAX_IV, Math.round(iv * ease * EASY_BONUS)); st.due = now + st.interval * DAY; }
+      else if (r === 'hard') { st.ease = Math.max(EASE_MIN, ease - 0.15); st.interval = Math.min(MAX_IV, Math.max(iv + 1, Math.round(iv * HARD_MULT))); st.due = dayStart(now) + st.interval * DAY; }
+      else if (r === 'good') { st.interval = Math.min(MAX_IV, Math.round(iv * ease)); st.due = dayStart(now) + st.interval * DAY; }
+      else { st.ease = ease + 0.15; st.interval = Math.min(MAX_IV, Math.round(iv * ease * EASY_BONUS)); st.due = dayStart(now) + st.interval * DAY; }
     }
     st.reps = (st.reps || 0) + 1;
     st.seen = todayStr();                 // 標記「今天在日文模式碰過」→ 中文模式當天鏡射得到
