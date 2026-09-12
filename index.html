@@ -538,11 +538,11 @@
         </div>
         <div class="roomrow">
           <button class="roombtn" id="createRoom" type="button">＋ 建立房間</button>
-          <input id="joincode" maxlength="4" placeholder="輸入房號" aria-label="房間代號" style="text-transform:uppercase">
+          <input id="joincode" maxlength="5" placeholder="輸入房號（5 位）" aria-label="房間代號" style="text-transform:uppercase">
           <button class="roombtn" id="joinRoom" type="button">加入</button>
         </div>
         <div class="roomcode" id="roomcode" hidden></div>
-        <div class="roomstatus" id="roomstatus">兩支手機都選「🌐 連線對戰」，一人按「建立房間」把房號報給對方，另一人輸入房號後按「加入」。</div>
+        <div class="roomstatus" id="roomstatus">兩支手機都選「🌐 連線對戰」，一人按「建立房間」把房號（5 位）報給對方，另一人輸入房號後按「加入」。</div>
       </div>
       <div class="mode-locked" id="modeHint">單人模式：點選答案立刻公布對錯與解析。這個模式會套用到接下來的閱讀理解題與複習題。</div>
     </div>
@@ -1017,7 +1017,13 @@ const net = {
   myName: '我', partnerId: null, partnerName: '對方',
   answers: {}, revealed: new Set(), scoreMe: 0, scorePartner: 0
 };
-const BROKER = 'wss://broker.emqx.io:8084/mqtt';
+// 中繼站清單：房號第 1 位字母就是中繼站代碼，兩支手機才保證連到同一台
+const BROKERS = [
+  { c: 'H', name: 'HiveMQ',    url: 'wss://broker.hivemq.com:8884/mqtt' },
+  { c: 'M', name: 'Mosquitto', url: 'wss://test.mosquitto.org:8081/' },
+  { c: 'E', name: 'EMQX',      url: 'wss://broker.emqx.io:8084/mqtt' }
+];
+const brokerByCode = (ch) => BROKERS.filter(b => b.c === ch)[0] || null;
 const roomTopic = () => 'dj/room/' + net.room;
 
 function genCode() {
@@ -1033,40 +1039,78 @@ function setRoomLive() {
 $('createRoom').addEventListener('click', () => startOnline(genCode(), true));
 $('joinRoom').addEventListener('click', () => {
   const code = ($('joincode').value || '').trim().toUpperCase();
-  if (code.length < 4) { setStatus('請先輸入 4 位房號', 'err'); return; }
+  if (code.length !== 5 || !brokerByCode(code.charAt(0))) { setStatus('請輸入對方給的完整 5 位房號（例如 H7K2Q）', 'err'); return; }
   startOnline(code, false);
 });
 
-function startOnline(code, isCreator) {
+// 連到指定中繼站；成功回 client，失敗回 null（不卡住，最多等 7 秒）
+function connectTo(b) {
+  return new Promise(res => {
+    let done = false, c;
+    try { c = mqtt.connect(b.url, { clientId: 'dj_' + net.myId, clean: true, connectTimeout: 6000, reconnectPeriod: 4000 }); }
+    catch (e) { return res(null); }
+    const fin = (ok) => { if (done) return; done = true; if (!ok) { try { c.end(true); } catch (e) {} } res(ok ? c : null); };
+    c.on('connect', () => fin(true));
+    c.on('error', () => fin(false));
+    setTimeout(() => fin(false), 7000);
+  });
+}
+function failOnline(msg) {
+  setStatus(msg, 'err');
+  net.started = false; state.locked = false;
+  ['createRoom', 'joinRoom', 'myname', 'joincode'].forEach(id => { $(id).disabled = false; });
+}
+
+async function startOnline(code, isCreator) {
   if (net.started) return;
   if (typeof mqtt === 'undefined') {
     setStatus('連線服務載入失敗（可能是網路擋住），請改用「💑 同機雙人」。', 'err'); return;
   }
   net.started = true;
   net.myName = (($('myname').value || '').trim() || '我').slice(0, 8);
-  net.room = code;
   state.locked = true;  // 鎖定模式，開賽後不再切換
   ['createRoom', 'joinRoom', 'myname', 'joincode'].forEach(id => { $(id).disabled = true; });
-  setStatus('連線中…');
 
-  net.client = mqtt.connect(BROKER, {
-    clientId: 'dj_' + net.myId, clean: true, connectTimeout: 8000, reconnectPeriod: 4000
-  });
-  net.client.on('connect', () => {
-    net.connected = true;
-    net.client.subscribe(roomTopic(), () => {
+  // 建房者：依序試中繼站，第一個連上的就當這局的中繼站（代碼放進房號第 1 位）
+  // 加入者：直接照房號第 1 位連同一台，保證兩邊落在同一個中繼站
+  let broker = null, client = null;
+  if (isCreator) {
+    for (let i = 0; i < BROKERS.length; i++) {
+      setStatus('連線中…（中繼站：' + BROKERS[i].name + '）');
+      client = await connectTo(BROKERS[i]);
+      if (client) { broker = BROKERS[i]; break; }
+    }
+    if (!client) { failOnline('目前連不上任何中繼站，請檢查網路，或先用「💑 同機雙人」。'); return; }
+    net.room = broker.c + code;
+  } else {
+    broker = brokerByCode(code.charAt(0));
+    if (!broker) { failOnline('房號開頭不對，請跟對方確認完整的 5 位房號。'); return; }
+    setStatus('連線中…（中繼站：' + broker.name + '）');
+    client = await connectTo(broker);
+    if (!client) { failOnline('連不上中繼站（' + broker.name + '），請檢查網路，或請對方重新建立房間。'); return; }
+    net.room = code;
+  }
+
+  net.client = client;
+  net.connected = true;
+  const joinRoomTopic = () => {
+    client.subscribe(roomTopic(), () => {
       netPublish({ t: 'hello', id: net.myId, name: net.myName });
-      if (isCreator) { $('roomcode').hidden = false; $('roomcode').textContent = code; }
-      if (!net.partnerId) setStatus(isCreator ? ('房號：' + code + '　把它報給對方，等加入…') : ('已加入 ' + code + '，等對方…'));
+      if (isCreator) { $('roomcode').hidden = false; $('roomcode').textContent = net.room; }
+      if (!net.partnerId) setStatus(isCreator
+        ? ('房號：' + net.room + '　把它報給對方，等加入…（中繼站：' + broker.name + '）')
+        : ('已加入 ' + net.room + '，等對方…（中繼站：' + broker.name + '）'));
       $('scorebar').classList.add('show'); renderScore();
     });
-  });
-  net.client.on('message', (t, payload) => {
+  };
+  joinRoomTopic();
+  client.on('connect', () => { net.connected = true; joinRoomTopic(); });   // 斷線重連後重新訂閱
+  client.on('message', (t, payload) => {
     let m; try { m = JSON.parse(payload.toString()); } catch (e) { return; }
     onNetMessage(m);
   });
-  net.client.on('error', () => setStatus('連線出錯，請重新整理再試，或改用同機雙人。', 'err'));
-  net.client.on('close', () => { net.connected = false; });
+  client.on('error', () => setStatus('連線出錯，請重新整理再試，或改用同機雙人。', 'err'));
+  client.on('close', () => { net.connected = false; });
 }
 
 function netPublish(obj) {
