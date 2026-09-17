@@ -1363,13 +1363,53 @@ async function exportNote(L) {
       '<div class="adminpanel-card wide">' +
         '<div class="ap-title">⚙️ 管理控制面板</div>' +
         '<div class="ap-sub">題庫共 ' + ALL.length + ' 課，依 JLPT 分類。「跳到」切換到那一課；「筆記」把該課整理成 Obsidian 筆記（複製＋obsidian 連結）。</div>' +
+        '<div class="ap-row"><div class="ap-info"><b>🗓 排程檢查</b> · 看每個單字下次會在哪天出現</div><div class="ap-acts"><button class="ap-mini" id="apSched">打開</button></div></div>' +
         '<div class="ap-list">' + html + '</div>' +
         '<button class="np-x" id="apClose" type="button">關閉</button>' +
       '</div>';
     panel.classList.add('show');
     panel.querySelector('#apClose').onclick = close;
+    panel.querySelector('#apSched').onclick = openSchedule;
     panel.querySelectorAll('[data-jlv]').forEach(b => b.onclick = () => gotoLevelLesson(b.dataset.jlv, +b.dataset.ji));
     panel.querySelectorAll('[data-nlv]').forEach(b => b.onclick = () => exportNote(byLevel[b.dataset.nlv][+b.dataset.ni]));
+  }
+  function openSchedule() {
+    const api = (typeof window.djSched === 'function') ? window.djSched() : null;
+    if (!api) { alert('排程資料讀不到'); return; }
+    const st = api.state, now = Date.now(), todayEnd = api.dayStart(now) + api.DAY, ahead = now + 20 * api.MIN;
+    const phaseZh = { learning: '學習中', relearning: '重學中', review: '複習' };
+    const fmt = (ts) => { if (!ts) return '—'; const d = new Date(ts); return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); };
+    const rows = [];
+    VOCAB_DECK.forEach(c => {
+      const v = st[api.keyOf(c)]; if (!v) return;
+      const isToday = (v.phase === 'review') ? (v.due < todayEnd) : (v.due <= ahead);
+      rows.push({ w: c.word, rd: c.reading, ph: v.phase, iv: v.interval, due: v.due, reps: v.reps, seen: v.seen, today: isToday });
+    });
+    rows.sort((a, b) => (a.due || 0) - (b.due || 0));
+    const todayN = rows.filter(r => r.today).length;
+    const cap = 300, shown = rows.slice(0, cap);
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
+      '<tr style="text-align:left;color:var(--muted)"><th>單字</th><th>階段</th><th>間隔</th><th>下次出現</th><th>複習次數</th></tr>';
+    shown.forEach(r => {
+      html += '<tr style="border-top:1px solid var(--line)' + (r.today ? ';background:var(--accent-soft)' : '') + '">' +
+        '<td style="padding:5px 4px"><b>' + esc(r.w) + '</b><br><span style="color:var(--muted)">' + esc(r.rd) + '</span></td>' +
+        '<td style="padding:5px 4px">' + (phaseZh[r.ph] || r.ph || '') + '</td>' +
+        '<td style="padding:5px 4px">' + (r.iv ? r.iv + ' 天' : '—') + '</td>' +
+        '<td style="padding:5px 4px">' + fmt(r.due) + (r.today ? ' <b>（今天）</b>' : '') + '</td>' +
+        '<td style="padding:5px 4px">' + (r.reps || 0) + '</td></tr>';
+    });
+    html += '</table>';
+    panel.innerHTML =
+      '<div class="adminpanel-card wide">' +
+        '<div class="ap-title">🗓 排程檢查</div>' +
+        '<div class="ap-sub">有排程紀錄的字共 ' + rows.length + ' 個，其中 <b>' + todayN + '</b> 個算「今天要複習」（底色標示）。換日界線是每天凌晨 1:00。' +
+          (rows.length > cap ? '　僅列出最早到期的 ' + cap + ' 筆。' : '') + '</div>' +
+        '<div class="ap-list">' + html + '</div>' +
+        '<button class="np-x" id="apBack" type="button">← 回管理面板</button>' +
+        '<button class="np-x" id="apClose2" type="button">關閉</button>' +
+      '</div>';
+    panel.querySelector('#apBack').onclick = openPanel;
+    panel.querySelector('#apClose2').onclick = close;
   }
   panel.addEventListener('click', (e) => { if (e.target === panel) close(); });
   entry.addEventListener('click', openGate);
@@ -1454,7 +1494,7 @@ async function exportNote(L) {
   const SKEY = 'dj_anki', MKEY = 'dj_anki_mode', ZDKEY = 'dj_anki_zh_done', DKEY = 'dj_anki_daily', MIN = 60000, DAY = 86400000;
   // Anki 預設值（查證自 Anki 演算法）：每日新卡 20、學習步驟 1分/10分、畢業 1天、簡單 4天、
   // 起始 ease 2.5、Hard×1.2(ease−0.15)、Good×ease、Easy×ease×1.3(ease+0.15)、Again 重學(ease−0.2)。
-  const NEW_PER_DAY = 20, REVIEW_PER_DAY = 200;
+  const NEW_PER_DAY = 20, REVIEW_PER_DAY = 500;
   const LEARN_STEPS = [1, 10], GRAD_IV = 1, EASY_IV = 4, RELEARN_STEP = 10;
   const START_EASE = 2.5, EASE_MIN = 1.3, HARD_MULT = 1.2, EASY_BONUS = 1.3, LAPSE_MULT = 0.1, MAX_IV = 36500;
   const keyOf = (c) => c.word + '|' + c.reading;
@@ -1479,6 +1519,9 @@ async function exportNote(L) {
   const studyDayDate = (ts) => { const d = new Date(ts == null ? Date.now() : ts); if (d.getHours() < DAY_CUT) d.setDate(d.getDate() - 1); return d; };
   const todayStr = () => { const d = studyDayDate(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
   const dayStart = (ts) => { const d = studyDayDate(ts); d.setHours(DAY_CUT, 0, 0, 0); return d.getTime(); };   // 該學習日的 01:00
+  const fmtMD = (ts) => { const d = new Date(ts); return (d.getMonth() + 1) + '/' + d.getDate(); };
+  const dayLabel = (n) => n + '天·' + fmtMD(dayStart(Date.now()) + n * DAY);   // 例「3天·9/20」：直接顯示會在哪天出現
+  let revClipped = 0;   // 今天到期但超過上限、沒排進佇列的張數
   function loadDaily() { let o = {}; try { o = JSON.parse(localStorage.getItem(DKEY) || '{}'); } catch (e) {} if (o.date !== todayStr()) o = { date: todayStr(), newCount: 0 }; return o; }
   function saveDaily() { try { localStorage.setItem(DKEY, JSON.stringify(daily)); } catch (e) {} }
   let state, daily, queue, cur, flipped;
@@ -1510,9 +1553,12 @@ async function exportNote(L) {
       else if (st.phase === 'review' && st.due < dayEnd) rev.push(c);   // 到期早於「明天 01:00」＝今天的，整天一次列完（數量只減不增）
     });
     learn.sort((a, b) => (state[keyOf(a)].due || 0) - (state[keyOf(b)].due || 0));   // 早到期的先出
+    rev.sort((a, b) => (state[keyOf(a)].due || 0) - (state[keyOf(b)].due || 0));     // 先依到期排序再截斷，不會隨機丟掉卡
+    const revUse = rev.slice(0, REVIEW_PER_DAY);
+    revClipped = Math.max(0, rev.length - REVIEW_PER_DAY);
     const newBudget = Math.max(0, NEW_PER_DAY - daily.newCount);   // 今日還能背幾個新字
-    sh(rev); sh(fresh);
-    queue = learn.concat(rev.slice(0, REVIEW_PER_DAY)).concat(fresh.slice(0, newBudget));
+    sh(revUse); sh(fresh);
+    queue = learn.concat(revUse).concat(fresh.slice(0, newBudget));
   }
   // 中文模式：鏡射「當日日文模式的字」（今天到期的複習＋今天在日文模式碰過的字，含新學），反向再練一次；扣掉今天中文已完成的
   function buildQueueZh() {
@@ -1537,21 +1583,21 @@ async function exportNote(L) {
       const step = st ? (st.step || 0) : 0;
       if (r === 'again') return LEARN_STEPS[0] + ' 分';
       if (r === 'hard') return Math.round((LEARN_STEPS[step] || 1) * 1.5) + ' 分';
-      if (r === 'good') return (step + 1 >= LEARN_STEPS.length) ? (GRAD_IV + ' 天') : (LEARN_STEPS[step + 1] + ' 分');
-      return EASY_IV + ' 天';
+      if (r === 'good') return (step + 1 >= LEARN_STEPS.length) ? dayLabel(GRAD_IV) : (LEARN_STEPS[step + 1] + ' 分');
+      return dayLabel(EASY_IV);
     }
     if (ph === 'relearning') {
       const riv = Math.max(1, st.interval || 1);
       if (r === 'again') return RELEARN_STEP + ' 分';
       if (r === 'hard') return Math.round(RELEARN_STEP * 1.5) + ' 分';
-      if (r === 'good') return riv + ' 天';
-      return Math.max(riv + 2, 3) + ' 天';
+      if (r === 'good') return dayLabel(riv);
+      return dayLabel(Math.max(riv + 2, 3));
     }
     const iv = st.interval || 1, ease = st.ease || START_EASE;
     if (r === 'again') return RELEARN_STEP + ' 分';
-    if (r === 'hard') return Math.max(iv + 1, Math.round(iv * HARD_MULT)) + ' 天';
-    if (r === 'good') return Math.round(iv * ease) + ' 天';
-    return Math.round(iv * ease * EASY_BONUS) + ' 天';
+    if (r === 'hard') return dayLabel(Math.max(iv + 1, Math.round(iv * HARD_MULT)));
+    if (r === 'good') return dayLabel(Math.round(iv * ease));
+    return dayLabel(Math.round(iv * ease * EASY_BONUS));
   }
   function schedule(c, r) {
     const k = keyOf(c), now = Date.now();
@@ -1580,10 +1626,11 @@ async function exportNote(L) {
     }
     st.reps = (st.reps || 0) + 1;
     st.seen = todayStr();                 // 標記「今天在日文模式碰過」→ 中文模式當天鏡射得到
+    st.ts = now;                          // 最後複習時間戳：雲端同步逐張卡合併時，用它決定哪一台比較新
     state[k] = st; save(state);
     return st;
   }
-  function count() { const el = panel.querySelector('.anki-count'); if (el) el.textContent = '剩 ' + queue.length + '（新字 ' + daily.newCount + '/' + NEW_PER_DAY + '）'; }
+  function count() { const el = panel.querySelector('.anki-count'); if (el) el.textContent = '剩 ' + queue.length + '（新字 ' + daily.newCount + '/' + NEW_PER_DAY + '）' + (revClipped ? '　還有 ' + revClipped + ' 張明天排' : ''); }
   function render() {
     const body = panel.querySelector('.anki-body');
     if (!queue.length) { buildQueue(); cur = 0; }   // 清完後重建一次（撿還沒進佇列的到期/新卡）
@@ -1761,6 +1808,7 @@ async function exportNote(L) {
     buildQueue(); cur = 0; flipped = false;
     panel.classList.add('show'); render();
   }
+  window.djSched = () => ({ DAY: DAY, MIN: MIN, dayStart: dayStart, todayStr: todayStr, keyOf: keyOf, state: load() });
   btn.addEventListener('click', open);
 })();
 
@@ -1771,6 +1819,7 @@ async function exportNote(L) {
   if (typeof supabase === 'undefined') return;                          // SDK 沒載到就跳過，localStorage 照常
   const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
   const SYNC_KEY = (k) => /^dj_/.test(k) && k !== 'dj_unlocked' && k !== 'dj_last_ts';
+  const rawSet = localStorage.setItem.bind(localStorage);   // 原生寫入（不觸發同步排程）
   let user = null, pushTimer = null;
   window.djSupa = () => ({ sb: sb, user: user });   // 給 Anki 圖片模組取用（登入後才有 user）
 
@@ -1780,30 +1829,97 @@ async function exportNote(L) {
   const panel = document.createElement('div'); panel.className = 'notepanel'; document.body.appendChild(panel);
   panel.addEventListener('click', (e) => { if (e.target === panel) panel.classList.remove('show'); });
 
-  function setBtn() { btn.textContent = user ? ('☁️ 已同步：' + (user.email || '')) : '☁️ 登入雲端同步'; }
+  function setBtn() { btn.textContent = user ? ('☁️ ' + (syncState === 'pending' ? '未同步' : '已同步') + '：' + (user.email || '')) : '☁️ 登入雲端同步'; }
 
-  async function pushState() {
-    if (!user) return;
-    const data = {};
-    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (SYNC_KEY(k)) data[k] = localStorage.getItem(k); }
-    data._ts = Date.now();
-    try { localStorage.setItem('dj_last_ts', String(data._ts)); } catch (e) {}
-    try { await sb.from('dj_state').upsert({ user_id: user.id, data, updated_at: new Date().toISOString() }); } catch (e) {}
+  // ---- 逐張卡合併（不再整包覆蓋）：兩台裝置各自背過的進度都保得住 ----
+  const parseObj = (v) => { try { return JSON.parse(v || '{}'); } catch (e) { return {}; } };
+  const dayNum = (v) => { const a = String(v || '').split('-').map(Number); return (a[0] || 0) * 10000 + (a[1] || 0) * 100 + (a[2] || 0); };
+  function mergeCardMap(a, b) {          // dj_anki / dj_anki_zh：同一張卡取「最後複習」較新的，單邊獨有的保留
+    const L = parseObj(a), R = parseObj(b), out = {};
+    Object.keys(L).concat(Object.keys(R)).forEach(k => {
+      if (out[k] !== undefined) return;
+      const x = L[k], y = R[k];
+      if (!x) { out[k] = y; return; }
+      if (!y) { out[k] = x; return; }
+      const tx = +x.ts || 0, ty = +y.ts || 0;
+      if (tx !== ty) { out[k] = tx > ty ? x : y; return; }
+      out[k] = ((+x.reps || 0) >= (+y.reps || 0)) ? x : y;   // 舊資料沒時間戳：複習次數多的當較新
+    });
+    return JSON.stringify(out);
   }
-  function schedulePush() { if (!user) return; clearTimeout(pushTimer); pushTimer = setTimeout(pushState, 1500); }
+  function mergeDaily(a, b) {            // 今日新字數：同一天取較大值（避免重複發新字）
+    const L = parseObj(a), R = parseObj(b);
+    if (L.date !== R.date) return JSON.stringify(dayNum(R.date) > dayNum(L.date) ? R : L);
+    return JSON.stringify({ date: L.date, newCount: Math.max(+L.newCount || 0, +R.newCount || 0) });
+  }
+  function mergeZhDone(a, b) {           // 中文模式當天已完成：同一天取聯集
+    const L = parseObj(a), R = parseObj(b);
+    if (L.date !== R.date) return JSON.stringify(dayNum(R.date) > dayNum(L.date) ? R : L);
+    const seen = {}; (L.keys || []).concat(R.keys || []).forEach(k => { seen[k] = 1; });
+    return JSON.stringify({ date: L.date, keys: Object.keys(seen) });
+  }
+  function mergeState(localMap, remoteMap) {
+    const out = {}, lts = +(localMap._ts || 0), rts = +(remoteMap._ts || 0);
+    Object.keys(localMap).concat(Object.keys(remoteMap)).forEach(k => {
+      if (k === '_ts' || out[k] !== undefined) return;
+      const a = localMap[k], b = remoteMap[k];
+      if (a == null) { out[k] = b; return; }
+      if (b == null) { out[k] = a; return; }
+      if (k === 'dj_anki' || k === 'dj_anki_zh') { out[k] = mergeCardMap(a, b); return; }
+      if (k === 'dj_anki_daily') { out[k] = mergeDaily(a, b); return; }
+      if (k === 'dj_anki_zh_done') { out[k] = mergeZhDone(a, b); return; }
+      if (k === 'dj_vocab_img') { out[k] = JSON.stringify(Object.assign({}, parseObj(b), parseObj(a))); return; }
+      if (/^dj_prog_/.test(k)) { out[k] = String(Math.max(+a || 0, +b || 0)); return; }   // 進度只會往前
+      out[k] = (rts > lts) ? b : a;      // 其餘偏好設定：時間戳新的贏
+    });
+    return out;
+  }
+
+  let syncing = false, syncState = 'idle';
+
+  // pull → merge → push：每次同步都先讀雲端合併，才寫回雲端與本機
+  async function syncNow() {
+    if (!user || syncing) return;
+    syncing = true;
+    try {
+      const localMap = {};
+      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (SYNC_KEY(k)) localMap[k] = localStorage.getItem(k); }
+      localMap._ts = +(localStorage.getItem('dj_last_ts') || 0);
+
+      let remoteMap = null, readOk = false;
+      try { const r = await sb.from('dj_state').select('data').eq('user_id', user.id).maybeSingle(); if (r && r.error) throw r.error; remoteMap = (r.data && r.data.data) || null; readOk = true; } catch (e) { readOk = false; }
+      if (!readOk) { syncState = 'pending'; setBtn(); syncing = false; return; }   // 讀不到雲端就完全不動本機
+
+      let merged;
+      if (remoteMap) merged = mergeState(localMap, remoteMap);
+      else { merged = {}; Object.keys(localMap).forEach(k => { if (k !== '_ts') merged[k] = localMap[k]; }); }
+
+      let progChanged = false;
+      Object.keys(merged).forEach(k => {
+        if (localStorage.getItem(k) !== merged[k]) {
+          rawSet(k, merged[k]);
+          if (k === 'dj_level' || /^dj_prog_/.test(k)) progChanged = true;
+        }
+      });
+
+      const ts = Date.now();
+      const up = await sb.from('dj_state').upsert({ user_id: user.id, data: Object.assign({}, merged, { _ts: ts }), updated_at: new Date().toISOString() });
+      if (up && up.error) throw up.error;
+      rawSet('dj_last_ts', String(ts));            // 只有「確定上傳成功」才記時間戳
+      syncState = 'ok'; setBtn();
+
+      // 課程進度被雲端更新、且沒有正在背卡時才重讀（不打斷作答）
+      if (progChanged && !document.querySelector('.anki.show')) location.reload();
+    } catch (e) {
+      syncState = 'pending'; setBtn();
+    }
+    syncing = false;
+  }
+  function schedulePush() { if (!user) return; clearTimeout(pushTimer); pushTimer = setTimeout(syncNow, 1500); }
 
   async function afterLogin(u) {
     user = u; setBtn();
-    let remote = null;
-    try { const r = await sb.from('dj_state').select('data').eq('user_id', u.id).maybeSingle(); remote = r.data && r.data.data; } catch (e) {}
-    const localTs = +(localStorage.getItem('dj_last_ts') || 0);
-    if (remote && (remote._ts || 0) > localTs) {
-      Object.keys(remote).forEach(k => { if (k !== '_ts') { try { localStorage.setItem(k, remote[k]); } catch (e) {} } });
-      try { localStorage.setItem('dj_last_ts', String(remote._ts)); } catch (e) {}
-      location.reload();                 // 雲端較新 → 拉回並重讀
-    } else {
-      await pushState();                 // 首次登入／本機較新 → 上傳（含遷移現有進度）
-    }
+    await syncNow();
   }
 
   function openPanel() {
@@ -1813,7 +1929,7 @@ async function exportNote(L) {
         '<button class="np-obs" id="syncPush" type="button">立即同步一次</button>' +
         '<button class="np-x" id="syncOut" type="button">登出</button>' +
         '<button class="np-x" id="syncClose" type="button">關閉</button></div>';
-      panel.querySelector('#syncPush').onclick = async () => { await pushState(); panel.querySelector('.np-msg').innerHTML = '已同步 ✅'; };
+      panel.querySelector('#syncPush').onclick = async () => { await syncNow(); panel.querySelector('.np-msg').innerHTML = (syncState === 'ok' ? '已同步 ✅' : '同步失敗，稍後會自動再試 ⚠️'); };
       panel.querySelector('#syncOut').onclick = async () => { try { await sb.auth.signOut(); } catch (e) {} user = null; setBtn(); panel.classList.remove('show'); };
       panel.querySelector('#syncClose').onclick = () => panel.classList.remove('show');
     } else {
@@ -1857,9 +1973,8 @@ async function exportNote(L) {
   } catch (e) {}
 
   // 任何 dj_ 進度變動 → 自動排程上傳（登入後才會真的傳）
-  const _set = localStorage.setItem.bind(localStorage);
-  localStorage.setItem = function (k, v) { _set(k, v); if (SYNC_KEY(k)) schedulePush(); };
-  window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') pushState(); });
+  localStorage.setItem = function (k, v) { rawSet(k, v); if (SYNC_KEY(k)) schedulePush(); };
+  window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') syncNow(); });
 })();
 
 /* ---------- 五十音表（平/片假名，清音/濁音/半濁音/拗音，點格子發音）---------- */
