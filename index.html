@@ -2070,6 +2070,29 @@ async function exportNote(L) {
     const out = Object.keys(m).map((k) => m[k]).sort((p, q) => p[0] - q[0]).slice(-300);
     return JSON.stringify({ r: out });
   }
+  function mergeMx(a, b) {               // 模擬考紀錄：逐「卷×模式」取作答時間較新的那一次
+    // 不能整包 LWW。這張表裡存著每一卷最近一次的**作答內容**（交卷後要靠它看解析），
+    // 兩台裝置各考不同卷時，整包覆蓋會把另一台的那份解析無聲刪掉——
+    // 跟 2026-09-17 修掉的 Anki 進度覆蓋是同一類問題。
+    const L = parseObj(a), R = parseObj(b), out = {};
+    Object.keys(L).concat(Object.keys(R)).forEach((pid) => {
+      if (out[pid]) return;
+      const lp = L[pid] || {}, rp = R[pid] || {}, m = {};
+      Object.keys(lp).concat(Object.keys(rp)).forEach((k) => {
+        if (m[k]) return;
+        const x = lp[k], y = rp[k];
+        if (!x) { m[k] = y; return; }
+        if (!y) { m[k] = x; return; }
+        const win = (+y.at || 0) > (+x.at || 0) ? y : x;      // 作答內容取較新的那一次
+        m[k] = Object.assign({}, win, {                        // 次數與最佳成績要合起來算
+          times: Math.max(+x.times || 0, +y.times || 0),
+          best: Math.max(+x.best || 0, +y.best || 0),
+        });
+      });
+      out[pid] = m;
+    });
+    return JSON.stringify(out);
+  }
   function mergeState(localMap, remoteMap) {
     const out = {}, lts = +(localMap._ts || 0), rts = +(remoteMap._ts || 0);
     Object.keys(localMap).concat(Object.keys(remoteMap)).forEach(k => {
@@ -2083,6 +2106,7 @@ async function exportNote(L) {
       if (k === 'dj_vocab_img') { out[k] = JSON.stringify(Object.assign({}, parseObj(b), parseObj(a))); return; }
       if (k === 'dj_gram_wrong') { out[k] = mergeWrongBook(a, b); return; }
       if (k === 'dj_gram_rounds') { out[k] = mergeRounds(a, b); return; }
+      if (k === 'dj_mx_hist') { out[k] = mergeMx(a, b); return; }
       if (/^dj_prog_/.test(k)) { out[k] = String(Math.max(+a || 0, +b || 0)); return; }   // 進度只會往前
       out[k] = (rts > lts) ? b : a;      // 其餘偏好設定：時間戳新的贏
     });
@@ -2665,6 +2689,14 @@ async function exportNote(L) {
       p.books.forEach(b => {
         h += '<button class="mx-ghost" data-a="start:' + p.id + ':' + b.b + '">只考第' + b.b + '節（' + esc(b.name) + '）</button>';
       });
+      // 交卷之後解析還留著，隨時可以回來看最近那一次
+      Object.keys(rec).forEach(k => {
+        if (!rec[k] || !rec[k].ans) return;
+        const d = new Date(rec[k].at || 0);
+        h += '<button class="mx-ghost" data-a="last:' + p.id + ':' + k + '">📖 看上次的檢討（'
+          + (k === 'full' ? '整份' : '第' + k.slice(1) + '節') + '　'
+          + (d.getMonth() + 1) + '/' + d.getDate() + '　' + (rec[k].last || 0) + '%）</button>';
+      });
       h += '</div>';
     });
 
@@ -2948,12 +2980,36 @@ async function exportNote(L) {
     const hist = read(HISTKEY, {});
     const rec = hist[p.id] || {};
     const k = run.only ? ('b' + run.only) : 'full';
-    rec[k] = { times: ((rec[k] || {}).times || 0) + 1, best: Math.max((rec[k] || {}).best || 0, pct), last: pct, at: nowMs() };
+    const prev = rec[k] || {};
+    // 連作答一起留著，交卷後還能回來看解析。只留最新的那一次——
+    // 留全部的話體積會一直長，而且考第三次時第一次的檢討也沒人要看。
+    rec[k] = {
+      times: (prev.times || 0) + 1,
+      best: Math.max(prev.best || 0, pct),
+      last: pct, at: nowMs(),
+      only: run.only, ans: run.ans,
+    };
     hist[p.id] = rec;
     write(HISTKEY, hist);
   }
 
-  const save = () => write(RUNKEY, run);
+  // 從歷史紀錄還原一場考完的考試，只用來看檢討；不寫回 RUNKEY，
+  // 以免把真正進行中的那一場蓋掉。
+  function openLast(pid, k) {
+    const rec = (read(HISTKEY, {})[pid] || {})[k];
+    if (!rec || !rec.ans) return false;
+    run = { paper: pid, only: rec.only || 0, book: 0, end: 0,
+            ans: rec.ans, flag: {}, furi: true, done: true, replay: true };
+    return true;
+  }
+  // 回選卷畫面時把記憶體裡的 run 換回「真正進行中的那一場」
+  function reloadRun() {
+    const r = read(RUNKEY, null);
+    run = (r && !r.done) ? r : null;
+  }
+
+  // replay＝從歷史還原來看檢討的，存回去會把真正進行中的那一場蓋掉
+  const save = () => { if (run && !run.replay) write(RUNKEY, run); };
   function clearRun() { run = null; try { localStorage.removeItem(RUNKEY); } catch (e) {} }
 
   function startTick() {
@@ -3008,7 +3064,7 @@ async function exportNote(L) {
     if (a === 'back') {
       if (view === 'exam') { dlg = leaveDlg(); render(); return; }
       if (view === 'list') { close(); return; }
-      view = 'list'; render(); return;
+      reloadRun(); view = 'list'; render(); return;
     }
     if (a === 'dlg-cancel') { dlg = null; render(); return; }
     if (a === 'dlg-leave') { dlg = null; stopTick(); view = 'list'; save(); render(); updateBtn(); return; }
@@ -3038,7 +3094,12 @@ async function exportNote(L) {
     if (a === 'tonext') { view = 'between'; render(); return; }
     if (a === 'toscore') { run.done = true; saveScore(); save(); view = 'score'; render(); updateBtn(); return; }
     if (a === 'toreview') { view = 'review'; render(); return; }
-    if (a === 'tolist') { view = 'list'; render(); return; }
+    if (a.indexOf('last:') === 0) {
+      const q = a.split(':');
+      if (openLast(q[1], q[2])) { view = 'review'; render(); }
+      return;
+    }
+    if (a === 'tolist') { reloadRun(); view = 'list'; render(); return; }
 
     if (view !== 'exam') return;
     // 時間到的判定看「按下去的那一刻」，不是看畫面上的數字
