@@ -186,6 +186,36 @@
   .anki-body { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 20px; max-width: 480px; width: 100%; margin: 0 auto; box-sizing: border-box; overflow-y: auto; }
   .anki-card { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 34px 22px; min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; box-shadow: 0 12px 34px rgba(0,0,0,.12); }
   .anki-lv { font-size: 13px; font-weight: 800; color: #fff; background: var(--accent); border-radius: 999px; padding: 2px 12px; }
+  /* 詞性：只在翻面後出現。放正面等於多給一個提示（看到「動詞」就縮小了猜的範圍） */
+  .anki-pos { display: inline-block; font-size: 12px; font-weight: 800; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; margin-top: 2px; }
+  .anki-statbtn { background: transparent; border: none; color: var(--accent); font-size: 17px; cursor: pointer; padding: 0 4px; }
+  /* ---- 學習數據（唯讀畫面，絕不寫入排程狀態）。前綴 st- ---- */
+  .st { position: fixed; inset: 0; z-index: 142; display: none; flex-direction: column; background: var(--bg); }
+  .st.show { display: flex; }
+  .st-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .st-top > span { font-size: 15px; font-weight: 700; }
+  .st-back { background: transparent; border: none; color: var(--accent); font-size: 15px; font-weight: 700; cursor: pointer; }
+  .st-body { flex: 1; overflow-y: auto; padding: 16px 16px 40px; max-width: 560px; width: 100%; margin: 0 auto; box-sizing: border-box; }
+  .st-sec { margin-bottom: 22px; }
+  .st-h { font-size: 12px; font-weight: 800; color: var(--muted); letter-spacing: .05em; margin-bottom: 9px; }
+  .st-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 15px; }
+  .st-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 14px; font-weight: 700; color: var(--muted); padding: 4px 0; }
+  .st-row b { color: var(--fg); font-size: 16px; }
+  .st-note { font-size: 12.5px; line-height: 1.8; color: var(--muted); margin-top: 10px; }
+  /* 堆疊長條：四段用寬度表示比例，顏色之外另外用圖例文字標，不單靠顏色辨識 */
+  .st-stack { display: flex; height: 13px; border-radius: 999px; overflow: hidden; background: var(--line); margin: 7px 0 5px; }
+  .st-stack i { display: block; height: 100%; }
+  .st-mature { background: #2f7d5a; } .st-young { background: #5a9bd4; }
+  .st-learn { background: #d9a441; } .st-new { background: var(--line); }
+  .st-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; font-weight: 700; color: var(--muted); }
+  .st-legend span::before { content: ''; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; background: currentColor; }
+  .st-lvname { font-size: 14px; font-weight: 800; color: var(--fg); }
+  .st-lvsub { font-size: 12px; font-weight: 700; color: var(--muted); }
+  .st-bars { display: flex; align-items: flex-end; gap: 2px; height: 90px; margin: 10px 0 4px; }
+  .st-bars i { flex: 1 1 0; min-width: 0; background: var(--accent); border-radius: 2px 2px 0 0; display: block; }
+  .st-bars i.zero { background: var(--line); }
+  .st-axis { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; color: var(--muted); }
+  .st-empty { font-size: 13px; line-height: 1.8; color: var(--muted); padding: 10px 0; }
   .anki-img { max-width: 100%; max-height: 150px; border-radius: 12px; object-fit: contain; }
   .anki-imgrow { display: flex; gap: 8px; justify-content: center; margin-top: 6px; }
   .anki-imgbtn { font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
@@ -1629,6 +1659,10 @@ async function exportNote(L) {
      注意：keyOf 仍然用原始的 word，卡片身分不變，背過的進度不會斷。 */
   const plainA = (s) => String(s == null ? '' : s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '$1');
 
+  // 詞性只在翻面後出現。資料本來就有（牌組 1751 張全部有 pos），這裡純顯示，
+  // 不改卡片身分、不進排程、不影響任何既有進度。
+  const posTag = (c) => c && c.pos ? '<div><span class="anki-pos">' + esc(c.pos) + '</span></div>' : '';
+
   /* 一次性的進度搬移。2026-09-30 刪掉了 18 筆「讀音欄誤填成另一種寫法」的重複單字
      （例如 いい 的讀音被寫成 よい），那些卡的身分因此消失。這裡把舊身分上的進度
      補到正確的那張卡上。
@@ -1842,7 +1876,8 @@ async function exportNote(L) {
       // 日文模式：正面 日文單字（＋圖在上方）；翻開 讀音／中文／例句
       h += imgTag + '<div class="anki-word">' + esc(plainA(c.word)) + '</div><button class="anki-say" id="aSay" type="button">🔊</button>';
       if (flipped) {
-        h += '<div class="anki-reading">' + esc(c.reading) + '</div>' + divider +
+        h += '<div class="anki-reading">' + esc(c.reading) + '</div>'
+          + posTag(c) + divider +
           '<div class="anki-zh">' + esc(c.zh) + '</div>' + exBlock + imgManage;
       }
     } else {
@@ -1850,7 +1885,7 @@ async function exportNote(L) {
       h += '<div class="anki-zh">' + esc(c.zh) + '</div>';
       if (flipped) {
         h += divider + imgTag + '<div class="anki-word">' + esc(plainA(c.word)) + '</div>' +
-          '<div class="anki-reading">' + esc(c.reading) + '</div>' +
+          '<div class="anki-reading">' + esc(c.reading) + '</div>' + posTag(c) +
           '<button class="anki-say" id="aSay" type="button">🔊</button>' + exBlock + imgManage;
       }
     }
@@ -1878,7 +1913,11 @@ async function exportNote(L) {
         if (cur >= queue.length) cur = 0;
         flipped = false; render(); return;
       }
+      // 先讀出作答「之前」的階段，統計才分得出新字/學習中/複習。
+      // 這是唯讀，schedule() 本身一行都沒動。
+      const before = (load()[keyOf(c)] || {}).phase || 'new';
       const st = schedule(c, b.dataset.r);
+      logAnswer(b.dataset.r, before);
       queue.splice(cur, 1);
       if (st.due - Date.now() < 20 * MIN) queue.push(c);   // 短間隔（學習/重學中）本輪稍後再出現
       if (cur >= queue.length) cur = 0;
@@ -1988,13 +2027,194 @@ async function exportNote(L) {
     doSearch();
   }
   function open() {
-    panel.innerHTML = '<div class="anki-top"><button class="anki-back" id="ankiBack" type="button">← 回文章</button><span>單字測驗 · Anki</span><span class="anki-count"></span></div><div class="anki-modebar"></div><div class="anki-levels"></div><div class="anki-body"></div>';
+    panel.innerHTML = '<div class="anki-top"><button class="anki-back" id="ankiBack" type="button">← 回文章</button><span>單字測驗 · Anki</span><span><button class="anki-statbtn" id="ankiStat" type="button" title="學習數據">📊</button><span class="anki-count"></span></span></div><div class="anki-modebar"></div><div class="anki-levels"></div><div class="anki-body"></div>';
     panel.querySelector('#ankiBack').onclick = () => { speech.stop(); panel.classList.remove('show'); };
+    const sbtn = panel.querySelector('#ankiStat'); if (sbtn) sbtn.onclick = openStats;
     renderModeBar();
     renderLevelBar();
     buildQueue(); cur = 0; flipped = false;
     panel.classList.add('show'); render();
   }
+
+  /* ---------- 學習數據（唯讀）----------
+     這一整塊**只讀 dj_anki，不寫**。唯一會寫的是 dj_anki_log（每日彙總），
+     那是一個全新的獨立 key，跟排程狀態沒有任何交集。 */
+
+  const LOGKEY = 'dj_anki_log';
+  const LOG_KEEP = 400;                    // 只留最近 400 天，免得無限長大
+
+  const loadLog = () => { try { return JSON.parse(localStorage.getItem(LOGKEY) || '{}'); } catch (e) { return {}; } };
+
+  /**
+   * 記一次作答。**每天一筆彙總，不是每次作答一筆。**
+   * 每次一筆的話一年會累積到數十萬筆、約 700 KB，localStorage 會滿，
+   * 而且每答一題就要把整包重新上傳一次。彙總版一天約 100 bytes。
+   * 代價：永遠查不到「某一題是幾點幾分答的」——真的需要再說。
+   */
+  function logAnswer(rating, phaseBefore) {
+    try {
+      const log = loadLog(), d = todayStr();
+      const e = log[d] || { n: 0, again: 0, hard: 0, good: 0, easy: 0, nw: 0 };
+      e.n++;
+      if (e[rating] != null) e[rating]++;
+      if (phaseBefore === 'new') e.nw++;     // 這張卡今天第一次出現
+      log[d] = e;
+      // todayStr() 產的是「2026-10-4」這種沒補零的格式（它同時是 dj_anki_daily 與
+      // st.seen 的鍵，**不能動**）。所以這裡不能用字串排序——那會把 2026-10-10
+      // 排在 2026-10-4 前面，裁切時刪掉錯的那一天。照實際日期排。
+      const days = Object.keys(log).sort((x, y) => new Date(x) - new Date(y));
+      while (days.length > LOG_KEEP) delete log[days.shift()];
+      localStorage.setItem(LOGKEY, JSON.stringify(log));
+    } catch (e) { /* 統計壞掉不能影響背單字 */ }
+  }
+
+  // Anki 的定義：複習中且間隔 ≥ 21 天＝成熟，< 21 天＝年輕
+  const MATURE_IV = 21;
+  function bucketOf(st) {
+    if (!st || !st.phase) return 'new';
+    if (st.phase === 'learning' || st.phase === 'relearning') return 'learn';
+    return (st.interval || 0) >= MATURE_IV ? 'mature' : 'young';
+  }
+
+  const stPanel = document.createElement('div');
+  stPanel.className = 'st';
+  document.body.appendChild(stPanel);
+
+  const LBL = { mature: '成熟', young: '複習中', learn: '學習中', new: '未學' };
+  const COLOR = { mature: '#2f7d5a', young: '#5a9bd4', learn: '#d9a441', new: 'var(--line)' };
+
+  function stackHtml(b, total) {
+    if (!total) return '';
+    const seg = ['mature', 'young', 'learn', 'new']
+      .map(k => b[k] ? '<i class="st-' + k + '" style="width:' + (b[k] / total * 100) + '%"></i>' : '').join('');
+    return '<div class="st-stack">' + seg + '</div>';
+  }
+  function legendHtml(b) {
+    return '<div class="st-legend">' + ['mature', 'young', 'learn', 'new']
+      .map(k => '<span style="color:' + COLOR[k] + '">' + LBL[k] + ' ' + (b[k] || 0) + '</span>').join('') + '</div>';
+  }
+  function barsHtml(vals, labels) {
+    const max = Math.max.apply(null, vals.concat([1]));
+    return '<div class="st-bars">' + vals.map(v =>
+      '<i class="' + (v ? '' : 'zero') + '" style="height:' + Math.max(v ? 4 : 2, v / max * 100) + '%"'
+      + ' title="' + v + '"></i>').join('') + '</div>'
+      + '<div class="st-axis">' + labels.map(l => '<span>' + l + '</span>').join('') + '</div>';
+  }
+
+  function renderStats() {
+    const state = load();                          // 唯讀
+    const deck = Array.isArray(VOCAB_DECK) ? VOCAB_DECK : [];
+    const log = loadLog(), td = todayStr();
+    const today = log[td] || { n: 0, again: 0, hard: 0, good: 0, easy: 0, nw: 0 };
+
+    // 各級：每一級的卡分成四類
+    const byLv = {};
+    const all = { mature: 0, young: 0, learn: 0, new: 0 };
+    deck.forEach(c => {
+      const lv = c.level || '其他';
+      const b = byLv[lv] || (byLv[lv] = { mature: 0, young: 0, learn: 0, new: 0, total: 0 });
+      const k = bucketOf(state[keyOf(c)]);
+      b[k]++; b.total++; all[k]++;
+    });
+    const order = ['N5', 'N4', 'N3', 'N2', 'N1'];
+    const lvs = Object.keys(byLv).sort((a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      return (ia < 0 ? 9 : ia) - (ib < 0 ? 9 : ib);
+    });
+
+    let h = '<div class="st-body">';
+
+    h += '<div class="st-sec"><div class="st-h">今天</div><div class="st-card">'
+      + '<div class="st-row"><span>複習了</span><b>' + today.n + ' 張</b></div>'
+      + '<div class="st-row"><span>新字</span><b>' + today.nw + ' / ' + NEW_PER_DAY + '</b></div>'
+      + (today.n
+        ? '<div class="st-row"><span>再來 / 困難 / 良好 / 簡單</span><b>'
+          + today.again + ' / ' + today.hard + ' / ' + today.good + ' / ' + today.easy + '</b></div>'
+          + '<div class="st-row"><span>一次就記得</span><b>'
+          + Math.round((today.n - today.again) / today.n * 100) + '%</b></div>'
+        : '<div class="st-empty">今天還沒開始背。</div>')
+      + '</div></div>';
+
+    h += '<div class="st-sec"><div class="st-h">各級進度</div><div class="st-card">';
+    lvs.forEach(lv => {
+      const b = byLv[lv], done = b.mature + b.young + b.learn;
+      h += '<div style="margin-bottom:14px">'
+        + '<div class="st-row" style="padding:0"><span class="st-lvname">' + esc(lv) + '</span>'
+        + '<span class="st-lvsub">' + done + ' / ' + b.total + '　' + Math.round(done / b.total * 100) + '%</span></div>'
+        + stackHtml(b, b.total) + legendHtml(b) + '</div>';
+    });
+    h += '<div class="st-note">「成熟」是間隔已經拉到 21 天以上的卡，跟 Anki 同一個標準。'
+      + '「未學」是還沒發到你手上的字。</div></div></div>';
+
+    h += '<div class="st-sec"><div class="st-h">全部卡片</div><div class="st-card">'
+      + stackHtml(all, deck.length) + legendHtml(all)
+      + '<div class="st-row" style="margin-top:8px"><span>牌組總數</span><b>' + deck.length + ' 張</b></div>'
+      + '</div></div>';
+
+    // 未來 30 天到期量
+    const fut = new Array(30).fill(0);
+    Object.keys(state).forEach(k => {
+      const st = state[k];
+      if (!st || st.phase === 'learning' || st.phase === 'relearning' || !st.due) return;
+      const d = Math.floor((st.due - dayStart(Date.now())) / DAY);
+      if (d >= 0 && d < 30) fut[d]++;
+      else if (d < 0) fut[0]++;                    // 已經過期的算今天
+    });
+    h += '<div class="st-sec"><div class="st-h">未來 30 天要複習</div><div class="st-card">'
+      + barsHtml(fut, ['今天', '+10天', '+20天', '+29天'])
+      + '<div class="st-row" style="margin-top:8px"><span>這 30 天合計</span><b>'
+      + fut.reduce((a, b) => a + b, 0) + ' 張</b></div>'
+      + '<div class="st-note">假設你每天都把當天的做完、而且都沒按「再來」。</div></div></div>';
+
+    // 間隔分佈
+    const IVB = [[0, 1, '1天'], [1, 7, '1週'], [7, 21, '3週'], [21, 60, '2月'], [60, 180, '半年'], [180, 1e9, '更久']];
+    const ivc = IVB.map(() => 0);
+    let ivn = 0;
+    Object.keys(state).forEach(k => {
+      const st = state[k];
+      if (!st || st.phase !== 'review') return;
+      const iv = st.interval || 0; ivn++;
+      for (let i = 0; i < IVB.length; i++) { if (iv >= IVB[i][0] && iv < IVB[i][1]) { ivc[i]++; break; } }
+    });
+    h += '<div class="st-sec"><div class="st-h">間隔分佈</div><div class="st-card">'
+      + (ivn ? barsHtml(ivc, IVB.map(x => x[2]))
+        + '<div class="st-note">間隔越長代表記得越牢。剛畢業的卡在左邊，背熟的會慢慢往右移。</div>'
+        : '<div class="st-empty">還沒有卡片進入複習階段。</div>')
+      + '</div></div>';
+
+    // 難易度（ease）分佈
+    const EB = [[0, 1.8, '很難'], [1.8, 2.2, '偏難'], [2.2, 2.6, '普通'], [2.6, 3, '偏easy'], [3, 9, '很easy']];
+    const ec = EB.map(() => 0);
+    let en = 0, esum = 0;
+    Object.keys(state).forEach(k => {
+      const st = state[k];
+      if (!st || st.phase !== 'review' || !st.ease) return;
+      en++; esum += st.ease;
+      for (let i = 0; i < EB.length; i++) { if (st.ease >= EB[i][0] && st.ease < EB[i][1]) { ec[i]++; break; } }
+    });
+    h += '<div class="st-sec"><div class="st-h">難易度分佈</div><div class="st-card">'
+      + (en ? barsHtml(ec, EB.map(x => x[2]))
+        + '<div class="st-row" style="margin-top:8px"><span>平均</span><b>' + (esum / en).toFixed(2) + '</b></div>'
+        + '<div class="st-note">這是 Anki 的 ease：按「再來」會往下掉、按「簡單」會往上。'
+        + '一直掉代表這張卡對你來說太難，可以考慮改一下記憶方式。</div>'
+        : '<div class="st-empty">還沒有卡片進入複習階段。</div>')
+      + '</div></div>';
+
+    const days = Object.keys(log).length;
+    h += '<div class="st-sec"><div class="st-h">之後會有的</div><div class="st-card">'
+      + '<div class="st-note">每天複習量的長條圖、熱力圖、四個鍵的長期比例、實際記住率，'
+      + '這些都要有「每天的紀錄」才畫得出來。本站<b>從今天才開始記</b>，'
+      + '過去的沒辦法補回來。<br>目前累積了 <b>' + days + '</b> 天。</div></div></div>';
+
+    h += '</div>';
+    stPanel.innerHTML = '<div class="st-top"><button class="st-back" id="stBack" type="button">← 回測驗</button>'
+      + '<span>學習數據</span><span style="width:60px"></span></div>' + h;
+    const bk = stPanel.querySelector('#stBack');
+    if (bk) bk.onclick = () => stPanel.classList.remove('show');
+  }
+
+  function openStats() { renderStats(); stPanel.classList.add('show'); }
+
   window.djSched = () => ({ DAY: DAY, MIN: MIN, dayStart: dayStart, todayStr: todayStr, keyOf: keyOf, state: load() });
   btn.addEventListener('click', open);
 })();
@@ -2070,6 +2290,19 @@ async function exportNote(L) {
     const out = Object.keys(m).map((k) => m[k]).sort((p, q) => p[0] - q[0]).slice(-300);
     return JSON.stringify({ r: out });
   }
+  function mergeLog(a, b) {              // 學習數據的每日彙總：逐日逐欄取較大值
+    // 不能整包 LWW（會刪掉另一台的紀錄），也不能相加（同一台重複同步會灌水）。
+    // 取較大值在「兩台同一天各背一些」時會少算，方向是保守的——
+    // 這是統計數字，寧可少報也不要虛報。
+    const L = parseObj(a), R = parseObj(b), out = {};
+    Object.keys(L).concat(Object.keys(R)).forEach((d) => {
+      if (out[d]) return;
+      const x = L[d] || {}, y = R[d] || {}, m = {};
+      Object.keys(x).concat(Object.keys(y)).forEach((k) => { m[k] = Math.max(+x[k] || 0, +y[k] || 0); });
+      out[d] = m;
+    });
+    return JSON.stringify(out);
+  }
   function mergeMx(a, b) {               // 模擬考紀錄：逐「卷×模式」取作答時間較新的那一次
     // 不能整包 LWW。這張表裡存著每一卷最近一次的**作答內容**（交卷後要靠它看解析），
     // 兩台裝置各考不同卷時，整包覆蓋會把另一台的那份解析無聲刪掉——
@@ -2107,6 +2340,7 @@ async function exportNote(L) {
       if (k === 'dj_gram_wrong') { out[k] = mergeWrongBook(a, b); return; }
       if (k === 'dj_gram_rounds') { out[k] = mergeRounds(a, b); return; }
       if (k === 'dj_mx_hist') { out[k] = mergeMx(a, b); return; }
+      if (k === 'dj_anki_log') { out[k] = mergeLog(a, b); return; }
       if (/^dj_prog_/.test(k)) { out[k] = String(Math.max(+a || 0, +b || 0)); return; }   // 進度只會往前
       out[k] = (rts > lts) ? b : a;      // 其餘偏好設定：時間戳新的贏
     });
