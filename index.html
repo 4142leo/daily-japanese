@@ -178,6 +178,9 @@
   .anki-count { font-size: 13px; color: var(--muted); font-weight: 700; }
   .anki-levels { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); justify-content: center; }
   .anki-lvlabel { font-size: 12px; color: var(--muted); font-weight: 700; margin-right: 2px; }
+  .anki-newbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); justify-content: center; }
+  .anki-newhint { flex-basis: 100%; text-align: center; font-size: 11.5px; line-height: 1.7; color: var(--muted); font-weight: 700; }
+  .anki-newhint.pending { color: var(--accent); }
   .anki-lvchip { font-size: 13px; font-weight: 800; padding: 5px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
   .anki-lvchip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .anki-modebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); justify-content: center; }
@@ -1649,7 +1652,19 @@ async function exportNote(L) {
   const SKEY = 'dj_anki', MKEY = 'dj_anki_mode', ZDKEY = 'dj_anki_zh_done', DKEY = 'dj_anki_daily', MIN = 60000, DAY = 86400000;
   // Anki 預設值（查證自 Anki 演算法）：每日新卡 20、學習步驟 1分/10分、畢業 1天、簡單 4天、
   // 起始 ease 2.5、Hard×1.2(ease−0.15)、Good×ease、Easy×ease×1.3(ease+0.15)、Again 重學(ease−0.2)。
-  const NEW_PER_DAY = 20, REVIEW_PER_DAY = 500;
+  const NEW_PER_DAY_DEFAULT = 20, REVIEW_PER_DAY = 500;
+  // 每日新字上限可調（Leo 2026-10-26）。以 5 為單位，0＝暫停發新字、只做複習。
+  // 刻意**不是**改了就立刻生效：改設定時不重建佇列，等下次進測驗畫面才套用，
+  // 免得背到一半佇列突然多出或少掉卡。
+  const NPKEY = 'dj_anki_newper';
+  const NEW_STEPS = [0, 5, 10, 15, 20, 25, 30, 35, 40];
+  const loadNewPer = () => {
+    let v = NaN;
+    try { v = parseInt(localStorage.getItem(NPKEY), 10); } catch (e) {}
+    return (isFinite(v) && v >= 0) ? v : NEW_PER_DAY_DEFAULT;
+  };
+  const saveNewPer = (v) => { try { localStorage.setItem(NPKEY, String(v)); } catch (e) {} };
+  let queueNewPer = NEW_PER_DAY_DEFAULT;   // 目前這一輪佇列實際用的額度（可能跟設定不同）
   const LEARN_STEPS = [1, 10], GRAD_IV = 1, EASY_IV = 4, RELEARN_STEP = 10;
   const START_EASE = 2.5, EASE_MIN = 1.3, HARD_MULT = 1.2, EASY_BONUS = 1.3, LAPSE_MULT = 0.1, MAX_IV = 36500;
   const keyOf = (c) => c.word + '|' + c.reading;
@@ -1777,7 +1792,10 @@ async function exportNote(L) {
     rev.sort((a, b) => (state[keyOf(a)].due || 0) - (state[keyOf(b)].due || 0));     // 先依到期排序再截斷，不會隨機丟掉卡
     const revUse = rev.slice(0, REVIEW_PER_DAY);
     revClipped = Math.max(0, rev.length - REVIEW_PER_DAY);
-    const newBudget = Math.max(0, NEW_PER_DAY - daily.newCount);   // 今日還能背幾個新字
+    queueNewPer = loadNewPer();                                    // 這一輪的額度在這裡定案
+    const newBudget = Math.max(0, queueNewPer - daily.newCount);   // 今日還能背幾個新字
+    // 調低到比今天已背的還少時 newBudget 會是 0——今天就不再發新字，
+    // **但已經發出去的卡不會收回**（收回等於動到進度）。
     sh(revUse); sh(fresh);
     queue = learn.concat(revUse).concat(fresh.slice(0, newBudget));
   }
@@ -1851,12 +1869,20 @@ async function exportNote(L) {
     state[k] = st; save(state);
     return st;
   }
-  function count() { const el = panel.querySelector('.anki-count'); if (el) el.textContent = '剩 ' + queue.length + '（新字 ' + daily.newCount + '/' + NEW_PER_DAY + '）' + (revClipped ? '　還有 ' + revClipped + ' 張明天排' : ''); }
+  // 把額度調到比今天已背的還少時，「7/5」「7/0」看起來像壞掉。數字沒錯，
+  // 但要講成人話：已經超過上限就直接說今天不再發了。
+  function newCountLabel() {
+    if (queueNewPer === 0) return daily.newCount + '　已暫停';
+    if (daily.newCount >= queueNewPer) return daily.newCount + '　今天額滿';
+    return daily.newCount + '/' + queueNewPer;
+  }
+
+  function count() { const el = panel.querySelector('.anki-count'); if (el) el.textContent = '剩 ' + queue.length + '（新字 ' + newCountLabel() + '）' + (revClipped ? '　還有 ' + revClipped + ' 張明天排' : ''); }
   function render() {
     const body = panel.querySelector('.anki-body');
     if (!queue.length) { buildQueue(); cur = 0; }   // 清完後重建一次（撿還沒進佇列的到期/新卡）
     if (!queue.length) {
-      body.innerHTML = '<div class="anki-done">🎉 今天的字都複習完了！<br>今日新字 ' + daily.newCount + '/' + NEW_PER_DAY + '，到期的字之後會再出現。</div>';
+      body.innerHTML = '<div class="anki-done">🎉 今天的字都複習完了！<br>今日新字 ' + newCountLabel() + '，到期的字之後會再出現。</div>';
       count(); return;
     }
     const c = queue[cur];
@@ -1925,6 +1951,32 @@ async function exportNote(L) {
     });
     count();
   }
+  function renderNewBar() {
+    const bar = panel.querySelector('.anki-newbar'); if (!bar) return;
+    const sel = loadNewPer();
+    // 每天 N 個新字，穩定之後每天的複習量大約是 10×N（Anki 社群的經驗值，
+    // 來自「一張卡畢業前後總共會被複習大約十次」）。把後果直接寫在旁邊，
+    // 不要讓人調完三週後才發現複習量爆掉。
+    const load10 = sel * 10;
+    let h = '<span class="anki-lvlabel">每日新字</span>'
+      + NEW_STEPS.map(n => '<button type="button" class="anki-lvchip' + (n === sel ? ' on' : '')
+        + '" data-np="' + n + '">' + n + '</button>').join('');
+    const pending = sel !== queueNewPer;
+    h += '<div class="anki-newhint' + (pending ? ' pending' : '') + '">'
+      + (sel === 0 ? '暫停發新字，只做複習。'
+        : '每天 ' + sel + ' 個新字，穩定後每天大約要複習 ' + load10 + ' 張'
+          + (load10 > REVIEW_PER_DAY ? '（超過每日複習上限 ' + REVIEW_PER_DAY + ' 張）' : '') + '。')
+      + (pending ? '<br>這一輪還是用 ' + queueNewPer + '，下次進測驗才換成 ' + sel + '。' : '')
+      + '</div>';
+    bar.innerHTML = h;
+    bar.querySelectorAll('[data-np]').forEach(b2 => {
+      b2.onclick = () => {
+        saveNewPer(+b2.getAttribute('data-np'));
+        renderNewBar();        // 只更新這一列：刻意不重建佇列，免得背到一半卡片突然變動
+      };
+    });
+  }
+
   function renderLevelBar() {
     const bar = panel.querySelector('.anki-levels'); if (!bar) return;
     const avail = deckLevels(), sel = loadLevels();
@@ -2027,12 +2079,14 @@ async function exportNote(L) {
     doSearch();
   }
   function open() {
-    panel.innerHTML = '<div class="anki-top"><button class="anki-back" id="ankiBack" type="button">← 回文章</button><span>單字測驗 · Anki</span><span><button class="anki-statbtn" id="ankiStat" type="button" title="學習數據">📊</button><span class="anki-count"></span></span></div><div class="anki-modebar"></div><div class="anki-levels"></div><div class="anki-body"></div>';
+    panel.innerHTML = '<div class="anki-top"><button class="anki-back" id="ankiBack" type="button">← 回文章</button><span>單字測驗 · Anki</span><span><button class="anki-statbtn" id="ankiStat" type="button" title="學習數據">📊</button><span class="anki-count"></span></span></div><div class="anki-modebar"></div><div class="anki-levels"></div><div class="anki-newbar"></div><div class="anki-body"></div>';
     panel.querySelector('#ankiBack').onclick = () => { speech.stop(); panel.classList.remove('show'); };
     const sbtn = panel.querySelector('#ankiStat'); if (sbtn) sbtn.onclick = openStats;
     renderModeBar();
     renderLevelBar();
     buildQueue(); cur = 0; flipped = false;
+    renderNewBar();   // 要排在 buildQueue 之後：它會比對「設定值 vs 這一輪實際用的額度」，
+                      // 先畫的話 queueNewPer 還是上一輪的，會一直顯示「下次才生效」
     panel.classList.add('show'); render();
   }
 
@@ -2126,7 +2180,7 @@ async function exportNote(L) {
 
     h += '<div class="st-sec"><div class="st-h">今天</div><div class="st-card">'
       + '<div class="st-row"><span>複習了</span><b>' + today.n + ' 張</b></div>'
-      + '<div class="st-row"><span>新字</span><b>' + today.nw + ' / ' + NEW_PER_DAY + '</b></div>'
+      + '<div class="st-row"><span>新字</span><b>' + today.nw + ' / ' + loadNewPer() + '</b></div>'
       + (today.n
         ? '<div class="st-row"><span>再來 / 困難 / 良好 / 簡單</span><b>'
           + today.again + ' / ' + today.hard + ' / ' + today.good + ' / ' + today.easy + '</b></div>'
