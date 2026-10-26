@@ -178,9 +178,7 @@
   .anki-count { font-size: 13px; color: var(--muted); font-weight: 700; }
   .anki-levels { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); justify-content: center; }
   .anki-lvlabel { font-size: 12px; color: var(--muted); font-weight: 700; margin-right: 2px; }
-  .anki-newbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); justify-content: center; }
-  .anki-newhint { flex-basis: 100%; text-align: center; font-size: 11.5px; line-height: 1.7; color: var(--muted); font-weight: 700; }
-  .anki-newhint.pending { color: var(--accent); }
+
   .anki-lvchip { font-size: 13px; font-weight: 800; padding: 5px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
   .anki-lvchip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .anki-modebar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); justify-content: center; }
@@ -219,6 +217,9 @@
   .st-bars i.zero { background: var(--line); }
   .st-axis { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; color: var(--muted); }
   .st-empty { font-size: 13px; line-height: 1.8; color: var(--muted); padding: 10px 0; }
+  .st-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 4px; }
+  .st-note.pending { color: var(--accent); }
+  .st-note.pending b { color: var(--accent); }
   .anki-img { max-width: 100%; max-height: 150px; border-radius: 12px; object-fit: contain; }
   .anki-imgrow { display: flex; gap: 8px; justify-content: center; margin-top: 6px; }
   .anki-imgbtn { font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
@@ -1951,30 +1952,29 @@ async function exportNote(L) {
     });
     count();
   }
-  function renderNewBar() {
-    const bar = panel.querySelector('.anki-newbar'); if (!bar) return;
+  /**
+   * 「每日新字」設定，放在學習數據畫面裡（Leo 2026-10-26 指定搬過去）。
+   * 搬家的另一個好處：主畫面原本三排 chip（方向／級別／新字）在手機上
+   * 把卡片擠到快看不見，少一排就回來了。
+   */
+  function newPerCardHtml() {
     const sel = loadNewPer();
     // 每天 N 個新字，穩定之後每天的複習量大約是 10×N（Anki 社群的經驗值，
     // 來自「一張卡畢業前後總共會被複習大約十次」）。把後果直接寫在旁邊，
     // 不要讓人調完三週後才發現複習量爆掉。
     const load10 = sel * 10;
-    let h = '<span class="anki-lvlabel">每日新字</span>'
-      + NEW_STEPS.map(n => '<button type="button" class="anki-lvchip' + (n === sel ? ' on' : '')
-        + '" data-np="' + n + '">' + n + '</button>').join('');
     const pending = sel !== queueNewPer;
-    h += '<div class="anki-newhint' + (pending ? ' pending' : '') + '">'
+    return '<div class="st-sec"><div class="st-h">每日新字</div><div class="st-card">'
+      + '<div class="st-chips">'
+      + NEW_STEPS.map(n => '<button type="button" class="anki-lvchip' + (n === sel ? ' on' : '')
+        + '" data-np="' + n + '">' + n + '</button>').join('')
+      + '</div>'
+      + '<div class="st-note' + (pending ? ' pending' : '') + '">'
       + (sel === 0 ? '暫停發新字，只做複習。'
         : '每天 ' + sel + ' 個新字，穩定後每天大約要複習 ' + load10 + ' 張'
           + (load10 > REVIEW_PER_DAY ? '（超過每日複習上限 ' + REVIEW_PER_DAY + ' 張）' : '') + '。')
-      + (pending ? '<br>這一輪還是用 ' + queueNewPer + '，下次進測驗才換成 ' + sel + '。' : '')
-      + '</div>';
-    bar.innerHTML = h;
-    bar.querySelectorAll('[data-np]').forEach(b2 => {
-      b2.onclick = () => {
-        saveNewPer(+b2.getAttribute('data-np'));
-        renderNewBar();        // 只更新這一列：刻意不重建佇列，免得背到一半卡片突然變動
-      };
-    });
+      + (pending ? '<br><b>這一輪還是用 ' + queueNewPer + '，離開測驗畫面再進來才換成 ' + sel + '。</b>' : '')
+      + '</div></div></div>';
   }
 
   function renderLevelBar() {
@@ -2079,14 +2079,12 @@ async function exportNote(L) {
     doSearch();
   }
   function open() {
-    panel.innerHTML = '<div class="anki-top"><button class="anki-back" id="ankiBack" type="button">← 回文章</button><span>單字測驗 · Anki</span><span><button class="anki-statbtn" id="ankiStat" type="button" title="學習數據">📊</button><span class="anki-count"></span></span></div><div class="anki-modebar"></div><div class="anki-levels"></div><div class="anki-newbar"></div><div class="anki-body"></div>';
+    panel.innerHTML = '<div class="anki-top"><button class="anki-back" id="ankiBack" type="button">← 回文章</button><span>單字測驗 · Anki</span><span><button class="anki-statbtn" id="ankiStat" type="button" title="學習數據">📊</button><span class="anki-count"></span></span></div><div class="anki-modebar"></div><div class="anki-levels"></div><div class="anki-body"></div>';
     panel.querySelector('#ankiBack').onclick = () => { speech.stop(); panel.classList.remove('show'); };
     const sbtn = panel.querySelector('#ankiStat'); if (sbtn) sbtn.onclick = openStats;
     renderModeBar();
     renderLevelBar();
     buildQueue(); cur = 0; flipped = false;
-    renderNewBar();   // 要排在 buildQueue 之後：它會比對「設定值 vs 這一輪實際用的額度」，
-                      // 先畫的話 queueNewPer 還是上一輪的，會一直顯示「下次才生效」
     panel.classList.add('show'); render();
   }
 
@@ -2189,6 +2187,8 @@ async function exportNote(L) {
         : '<div class="st-empty">今天還沒開始背。</div>')
       + '</div></div>';
 
+    h += newPerCardHtml();
+
     h += '<div class="st-sec"><div class="st-h">各級進度</div><div class="st-card">';
     lvs.forEach(lv => {
       const b = byLv[lv], done = b.mature + b.young + b.learn;
@@ -2265,6 +2265,9 @@ async function exportNote(L) {
       + '<span>學習數據</span><span style="width:60px"></span></div>' + h;
     const bk = stPanel.querySelector('#stBack');
     if (bk) bk.onclick = () => stPanel.classList.remove('show');
+    stPanel.querySelectorAll('[data-np]').forEach(b2 => {
+      b2.onclick = () => { saveNewPer(+b2.getAttribute('data-np')); renderStats(); };
+    });   // 只重畫這個畫面：刻意不重建佇列，免得背到一半卡片突然變動
   }
 
   function openStats() { renderStats(); stPanel.classList.add('show'); }
