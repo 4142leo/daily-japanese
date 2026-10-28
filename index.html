@@ -224,6 +224,19 @@
   .st-axis { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; color: var(--muted); }
   .st-empty { font-size: 13px; line-height: 1.8; color: var(--muted); padding: 10px 0; }
   .st-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 4px; }
+  /* 熱力圖：一欄＝一週（由上到下週日→週六），所以用 grid-auto-flow:column */
+  .st-heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 1fr); gap: 3px; margin: 4px 0 8px; }
+  .st-heat i { width: 100%; aspect-ratio: 1; border-radius: 2px; background: var(--line); }
+  .st-heat i.pad { background: transparent; }
+  .st-heat i.l0, .st-heatlegend i.l0 { background: var(--line); }
+  .st-heat i.l1, .st-heatlegend i.l1 { background: #2f7d5a44; }
+  .st-heat i.l2, .st-heatlegend i.l2 { background: #2f7d5a88; }
+  .st-heat i.l3, .st-heatlegend i.l3 { background: #2f7d5acc; }
+  .st-heat i.l4, .st-heatlegend i.l4 { background: #2f7d5a; }
+  .st-heatlegend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; font-size: 11px; font-weight: 700; color: var(--muted); }
+  .st-heatlegend i { width: 10px; height: 10px; border-radius: 2px; display: block; }
+  .st-big { font-size: 38px; font-weight: 800; text-align: center; margin: 6px 0 2px; }
+  .st-bigsub { text-align: center; color: var(--muted); font-size: 13px; font-weight: 700; margin-bottom: 10px; }
   .st-note.pending { color: var(--accent); }
   .st-note.pending b { color: var(--accent); }
   .anki-img { max-width: 100%; max-height: 150px; border-radius: 12px; object-fit: contain; }
@@ -1659,7 +1672,18 @@ async function exportNote(L) {
   const SKEY = 'dj_anki', MKEY = 'dj_anki_mode', ZDKEY = 'dj_anki_zh_done', DKEY = 'dj_anki_daily', MIN = 60000, DAY = 86400000;
   // Anki 預設值（查證自 Anki 演算法）：每日新卡 20、學習步驟 1分/10分、畢業 1天、簡單 4天、
   // 起始 ease 2.5、Hard×1.2(ease−0.15)、Good×ease、Easy×ease×1.3(ease+0.15)、Again 重學(ease−0.2)。
-  const NEW_PER_DAY_DEFAULT = 20, REVIEW_PER_DAY = 500;
+  const NEW_PER_DAY_DEFAULT = 20, REVIEW_PER_DAY_DEFAULT = 500;
+  // 每日複習上限也可調（Leo 2026-10-28）。跟新字上限同一套規則：改了不立刻生效，
+  // 等下次進測驗畫面才套用。超過上限的卡**不會消失**，依到期先後排、剩下的明天再排。
+  const RPKEY = 'dj_anki_revper';
+  const REV_STEPS = [50, 100, 150, 200, 300, 500, 1000, 99999];
+  const loadRevPer = () => {
+    let v = NaN;
+    try { v = parseInt(localStorage.getItem(RPKEY), 10); } catch (e) {}
+    return (isFinite(v) && v > 0) ? v : REVIEW_PER_DAY_DEFAULT;
+  };
+  const saveRevPer = (v) => { try { localStorage.setItem(RPKEY, String(v)); } catch (e) {} };
+  let queueRevPer = REVIEW_PER_DAY_DEFAULT;   // 這一輪佇列實際用的上限
   // 每日新字上限可調（Leo 2026-10-26）。以 5 為單位，0＝暫停發新字、只做複習。
   // 刻意**不是**改了就立刻生效：改設定時不重建佇列，等下次進測驗畫面才套用，
   // 免得背到一半佇列突然多出或少掉卡。
@@ -1809,8 +1833,9 @@ async function exportNote(L) {
     });
     learn.sort((a, b) => (state[keyOf(a)].due || 0) - (state[keyOf(b)].due || 0));   // 早到期的先出
     rev.sort((a, b) => (state[keyOf(a)].due || 0) - (state[keyOf(b)].due || 0));     // 先依到期排序再截斷，不會隨機丟掉卡
-    const revUse = rev.slice(0, REVIEW_PER_DAY);
-    revClipped = Math.max(0, rev.length - REVIEW_PER_DAY);
+    queueRevPer = loadRevPer();                 // 這一輪的上限在這裡定案
+    const revUse = rev.slice(0, queueRevPer);   // 已依到期排序，截掉的是最晚到期的那批
+    revClipped = Math.max(0, rev.length - queueRevPer);
     queueNewPer = loadNewPer();                                    // 這一輪的額度在這裡定案
     const newBudget = Math.max(0, queueNewPer - daily.newCount);   // 今日還能背幾個新字
     // 調低到比今天已背的還少時 newBudget 會是 0——今天就不再發新字，
@@ -2020,7 +2045,7 @@ async function exportNote(L) {
       + '<div class="st-note' + (pending ? ' pending' : '') + '">'
       + (sel === 0 ? '暫停發新字，只做複習。'
         : '每天 ' + sel + ' 個新字，穩定後每天大約要複習 ' + load10 + ' 張'
-          + (load10 > REVIEW_PER_DAY ? '（超過每日複習上限 ' + REVIEW_PER_DAY + ' 張）' : '') + '。')
+          + (load10 > loadRevPer() ? '（超過你設的每日複習上限 ' + revLabel(loadRevPer()) + '）' : '') + '。')
       + (pending ? '<br><b>這一輪還是用 ' + queueNewPer + '，離開測驗畫面再進來才換成 ' + sel + '。</b>' : '')
       + '</div></div></div>';
   }
@@ -2208,6 +2233,123 @@ async function exportNote(L) {
       + '<div class="st-axis">' + labels.map(l => '<span>' + l + '</span>').join('') + '</div>';
   }
 
+  const revLabel = (n) => (n >= 99999 ? '無上限' : n + ' 張');
+
+  /**
+   * 「每日複習上限」設定，跟新字上限並排在學習數據裡。
+   * 超過上限的卡**不會不見**：複習佇列已經依到期先後排過，截掉的是最晚到期的那批，
+   * 畫面上會寫「還有 N 張明天排」。
+   */
+  function revPerCardHtml() {
+    const sel = loadRevPer(), pending = sel !== queueRevPer;
+    return '<div class="st-sec"><div class="st-h">每日複習上限</div><div class="st-card">'
+      + '<div class="st-chips">'
+      + REV_STEPS.map(n => '<button type="button" class="anki-lvchip' + (n === sel ? ' on' : '')
+        + '" data-rp="' + n + '">' + (n >= 99999 ? '無上限' : n) + '</button>').join('')
+      + '</div>'
+      + '<div class="st-note' + (pending ? ' pending' : '') + '">'
+      + (sel >= 99999 ? '一天的複習不設上限，到期多少就排多少。'
+        : '一天最多排 ' + sel + ' 張複習。')
+      + '超過的不會不見——複習是依到期先後排的，'
+      + '排不進來的那批明天會先出。積太多時把上限調低，可以先把當天的做完再說。'
+      + (pending ? '<br><b>這一輪還是用 ' + revLabel(queueRevPer) + '，離開測驗畫面再進來才換成 ' + revLabel(sel) + '。</b>' : '')
+      + '</div></div></div>';
+  }
+
+  /* ---------- 以下四張圖需要「每天的紀錄」，2026-10-04 才開始記 ---------- */
+
+  const dayKey = (d) => d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+
+  /** 最近 n 天（含今天）的紀錄，沒背的日子補 0。回傳由舊到新。 */
+  function recentDays(log, n) {
+    const out = [], base = studyDayDate();
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() - i);
+      out.push({ date: d, key: dayKey(d), e: log[dayKey(d)] || null });
+    }
+    return out;
+  }
+
+  function historyHtml(log) {
+    const days = Object.keys(log);
+    if (!days.length) {
+      return '<div class="st-sec"><div class="st-h">每天的紀錄</div><div class="st-card">'
+        + '<div class="st-empty">還沒有任何紀錄。這幾張圖要靠每天的作答累積，'
+        + '背過一天之後就會開始有東西。</div></div></div>';
+    }
+
+    let h = '';
+
+    // ① 每天複習量（最近 30 天）
+    const d30 = recentDays(log, 30);
+    const vals = d30.map(x => x.e ? x.e.n : 0);
+    const total30 = vals.reduce((a, b) => a + b, 0);
+    const activeDays = vals.filter(v => v).length;
+    h += '<div class="st-sec"><div class="st-h">最近 30 天每天複習量</div><div class="st-card">'
+      + barsHtml(vals, ['30天前', '20天前', '10天前', '今天'])
+      + '<div class="st-row" style="margin-top:8px"><span>這 30 天合計</span><b>' + total30 + ' 張</b></div>'
+      + '<div class="st-row"><span>有背的天數</span><b>' + activeDays + ' / 30</b></div>'
+      + (activeDays ? '<div class="st-row"><span>有背的那幾天平均</span><b>' + Math.round(total30 / activeDays) + ' 張</b></div>' : '')
+      + '</div></div>';
+
+    // ② 熱力圖（最近 18 週，依星期排成格子）
+    const WEEKS = 18;
+    const base = studyDayDate();
+    const endPad = 6 - base.getDay();                  // 補到該週的週六，格子才對齊
+    const cells = recentDays(log, WEEKS * 7 - endPad);
+    const max = Math.max.apply(null, cells.map(c => c.e ? c.e.n : 0).concat([1]));
+    // 第一天不是週日時，前面補空格，否則整張圖的星期會錯位
+    const lead = cells.length ? cells[0].date.getDay() : 0;
+    let grid = '';
+    for (let i = 0; i < lead; i++) grid += '<i class="pad"></i>';
+    cells.forEach(c => {
+      const n = c.e ? c.e.n : 0;
+      const lv = n === 0 ? 0 : Math.min(4, Math.ceil(n / max * 4));
+      grid += '<i class="l' + lv + '" title="' + c.key + '：' + n + ' 張"></i>';
+    });
+    h += '<div class="st-sec"><div class="st-h">最近 ' + WEEKS + ' 週</div><div class="st-card">'
+      + '<div class="st-heat">' + grid + '</div>'
+      + '<div class="st-heatlegend"><span>少</span>'
+      + [0, 1, 2, 3, 4].map(l => '<i class="l' + l + '"></i>').join('') + '<span>多</span></div>'
+      + '<div class="st-note">每一格是一天，由左上往右排，一直排一排是一週。顏色越深那天背越多。</div>'
+      + '</div></div>';
+
+    // ③ 四個鍵的比例（全部紀錄加總）
+    let ag = 0, hd = 0, gd = 0, es = 0;
+    days.forEach(d => { const e = log[d]; ag += e.again || 0; hd += e.hard || 0; gd += e.good || 0; es += e.easy || 0; });
+    const sum = ag + hd + gd + es;
+    if (sum) {
+      const seg = [['再來', ag, '#d2504a'], ['困難', hd, '#d9a441'], ['普通', gd, '#5a9bd4'], ['簡單', es, '#2f7d5a']];
+      h += '<div class="st-sec"><div class="st-h">四個鍵按了幾次</div><div class="st-card">'
+        + '<div class="st-stack">' + seg.map(x => x[1]
+          ? '<i style="width:' + (x[1] / sum * 100) + '%;background:' + x[2] + '"></i>' : '').join('') + '</div>'
+        + '<div class="st-legend">' + seg.map(x => '<span style="color:' + x[2] + '">' + x[0] + ' ' + x[1]
+          + '（' + Math.round(x[1] / sum * 100) + '%）</span>').join('') + '</div>'
+        + '<div class="st-note">「再來」太多代表新字發太快或卡片太難；「簡單」太多代表可以多發一點新字。</div>'
+        + '</div></div>';
+
+      // ④ 一次就記得的比例（整體與最近 7 天）
+      const r7 = recentDays(log, 7).filter(x => x.e && x.e.n);
+      const n7 = r7.reduce((a, x) => a + x.e.n, 0), a7 = r7.reduce((a, x) => a + (x.e.again || 0), 0);
+      const totalN = days.reduce((a, d) => a + (log[d].n || 0), 0);
+      const totalA = days.reduce((a, d) => a + (log[d].again || 0), 0);
+      h += '<div class="st-sec"><div class="st-h">一次就記得的比例</div><div class="st-card">'
+        + '<div class="st-big">' + (totalN ? Math.round((totalN - totalA) / totalN * 100) : 0) + '%</div>'
+        + '<div class="st-bigsub">全部紀錄（' + totalN + ' 次作答）</div>'
+        + (n7 ? '<div class="st-row"><span>最近 7 天</span><b>' + Math.round((n7 - a7) / n7 * 100) + '%</b></div>' : '')
+        + '<div class="st-note">＝沒按「再來」的比例。<b>這不等於 Anki 的 True Retention</b>——'
+        + '那個只算成熟卡，而本站的紀錄沒有分階段存，所以新字跟複習卡是混在一起算的，'
+        + '數字會被剛學的新字拉低。拿來跟自己上個月比可以，不要拿去跟別人的 Anki 數字比。</div>'
+        + '</div></div>';
+    }
+
+    const first = days.map(d => new Date(d)).sort((a, b) => a - b)[0];
+    h += '<div class="st-sec"><div class="st-card"><div class="st-note">'
+      + '紀錄從 ' + (first.getMonth() + 1) + '/' + first.getDate() + ' 開始累積，目前 <b>' + days.length + '</b> 天。'
+      + '在那之前的作答沒有留下紀錄，補不回來。</div></div></div>';
+    return h;
+  }
+
   function renderStats() {
     const state = load();                          // 唯讀
     const deck = Array.isArray(VOCAB_DECK) ? VOCAB_DECK : [];
@@ -2243,6 +2385,7 @@ async function exportNote(L) {
       + '</div></div>';
 
     h += newPerCardHtml();
+    h += revPerCardHtml();
 
     h += '<div class="st-sec"><div class="st-h">各級進度</div><div class="st-card">';
     lvs.forEach(lv => {
@@ -2309,11 +2452,7 @@ async function exportNote(L) {
         : '<div class="st-empty">還沒有卡片進入複習階段。</div>')
       + '</div></div>';
 
-    const days = Object.keys(log).length;
-    h += '<div class="st-sec"><div class="st-h">之後會有的</div><div class="st-card">'
-      + '<div class="st-note">每天複習量的長條圖、熱力圖、四個鍵的長期比例、實際記住率，'
-      + '這些都要有「每天的紀錄」才畫得出來。本站<b>從今天才開始記</b>，'
-      + '過去的沒辦法補回來。<br>目前累積了 <b>' + days + '</b> 天。</div></div></div>';
+    h += historyHtml(log);
 
     h += '</div>';
     stPanel.innerHTML = '<div class="st-top"><button class="st-back" id="stBack" type="button">← 回測驗</button>'
@@ -2322,6 +2461,9 @@ async function exportNote(L) {
     if (bk) bk.onclick = () => stPanel.classList.remove('show');
     stPanel.querySelectorAll('[data-np]').forEach(b2 => {
       b2.onclick = () => { saveNewPer(+b2.getAttribute('data-np')); renderStats(); };
+    });
+    stPanel.querySelectorAll('[data-rp]').forEach(b2 => {
+      b2.onclick = () => { saveRevPer(+b2.getAttribute('data-rp')); renderStats(); };
     });   // 只重畫這個畫面：刻意不重建佇列，免得背到一半卡片突然變動
   }
 
