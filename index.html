@@ -188,6 +188,12 @@
   .anki-card { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 34px 22px; min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; box-shadow: 0 12px 34px rgba(0,0,0,.12); }
   .anki-lv { font-size: 13px; font-weight: 800; color: #fff; background: var(--accent); border-radius: 999px; padding: 2px 12px; }
   /* 詞性：只在翻面後出現。放正面等於多給一個提示（看到「動詞」就縮小了猜的範圍） */
+  /* 聽力模式：正面只有這顆鍵，所以要大、要好按（48px 以上） */
+  .anki-listen { width: 96px; height: 96px; border-radius: 50%; border: 2px solid var(--accent); background: var(--surface); color: var(--accent); font-size: 40px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
+  .anki-listen:active { background: var(--accent); color: #fff; }
+  .anki-listenhint { font-size: 13px; color: var(--muted); font-weight: 700; margin-top: 10px; }
+  .anki-modenote { flex-basis: 100%; text-align: center; font-size: 11.5px; color: var(--muted); font-weight: 700; margin-top: 4px; }
+  .anki-modechip:disabled { opacity: .4; cursor: default; }
   .anki-pos { display: inline-block; font-size: 12px; font-weight: 800; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; margin-top: 2px; }
   .anki-statbtn { background: transparent; border: none; color: var(--accent); font-size: 17px; cursor: pointer; padding: 0 4px; }
   /* ---- 學習數據（唯讀畫面，絕不寫入排程狀態）。前綴 st- ---- */
@@ -1737,11 +1743,22 @@ async function exportNote(L) {
   migrateKeys();
   const rubyA = (s) => bold(esc(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '<ruby>$1<rt>$2</rt></ruby>'));
   // 雙模式：日文模式＝唯一排程主牌組（dj_anki）；中文模式＝每天鏡射「當日日文模式的字」、反向再練，不影響排程
-  const getMode = () => { try { return localStorage.getItem(MKEY) === 'zh' ? 'zh' : 'jp'; } catch (e) { return 'jp'; } };
-  const setMode = (m) => { try { localStorage.setItem(MKEY, m === 'zh' ? 'zh' : 'jp'); } catch (e) {} };
+  // 三種方向。jp 是唯一的排程主牌組；zh 與 listen 都只是「把當天那批字換個方式再練一次」，
+  // 兩者各自記自己的當日完成清單，互不影響（共用的話做完聽力會把中文也標成做完）。
+  const MODES = ['jp', 'zh', 'listen'];
+  const getMode = () => {
+    let m = 'jp';
+    try { m = localStorage.getItem(MKEY) || 'jp'; } catch (e) {}
+    return MODES.indexOf(m) >= 0 ? m : 'jp';
+  };
+  const setMode = (m) => { try { localStorage.setItem(MKEY, MODES.indexOf(m) >= 0 ? m : 'jp'); } catch (e) {} };
   const load = () => { try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch (e) { return {}; } };
   const save = (s) => { try { localStorage.setItem(SKEY, JSON.stringify(s)); } catch (e) {} };
   // 中文模式當天已完成哪些字（只記完成、不改排程；每天重置）
+  const LDKEY = 'dj_anki_listen_done';
+  function loadListenDone() { let o = {}; try { o = JSON.parse(localStorage.getItem(LDKEY) || '{}'); } catch (e) {} if (o.date !== todayStr()) o = { date: todayStr(), keys: [] }; return o; }
+  function saveListenDone(o) { try { localStorage.setItem(LDKEY, JSON.stringify(o)); } catch (e) {} }
+
   function loadZhDone() { let o = {}; try { o = JSON.parse(localStorage.getItem(ZDKEY) || '{}'); } catch (e) {} if (o.date !== todayStr()) o = { date: todayStr(), keys: [] }; return o; }
   function saveZhDone(o) { try { localStorage.setItem(ZDKEY, JSON.stringify(o)); } catch (e) {} }
   // 單字配圖：只存「word|reading → {url,source,license,by}」對照表（dj_ 前綴→自動雲端同步；圖本體存 Supabase 圖床）
@@ -1777,7 +1794,8 @@ async function exportNote(L) {
   function saveLevels(arr) { try { localStorage.setItem(LKEY, JSON.stringify(arr)); } catch (e) {} }
 
   function buildQueue() {
-    if (getMode() === 'zh') { buildQueueZh(); return; }   // 中文模式走鏡像
+    const md = getMode();
+    if (md === 'zh' || md === 'listen') { buildQueueMirror(md); return; }   // 這兩種都走鏡像
     state = load(); daily = loadDaily();
     const lvSel = loadLevels();
     const now = Date.now(), learn = [], rev = [], fresh = [];
@@ -1801,11 +1819,17 @@ async function exportNote(L) {
     queue = learn.concat(revUse).concat(fresh.slice(0, newBudget));
   }
   // 中文模式：鏡射「當日日文模式的字」（今天到期的複習＋今天在日文模式碰過的字，含新學），反向再練一次；扣掉今天中文已完成的
-  function buildQueueZh() {
+  /**
+   * 鏡像佇列：中文模式與聽力模式共用。
+   * 兩者都只是把「今天在日文模式碰到的那批字」換個方式再練一次，
+   * 不引入新字、不動排程——日文模式才是排程主。
+   * `done` 各自獨立（dj_anki_zh_done / dj_anki_listen_done），所以兩邊的進度互不干擾。
+   */
+  function buildQueueMirror(md) {
     state = load(); daily = loadDaily();
     const now = Date.now(), ahead = now + 20 * MIN, td = todayStr();
     const dayEnd = dayStart(now) + DAY;   // 明天 01:00＝今天的界線
-    const done = loadZhDone().keys, out = [];
+    const done = (md === 'listen' ? loadListenDone() : loadZhDone()).keys, out = [];
     VOCAB_DECK.forEach(c => {
       const st = state[keyOf(c)]; if (!st) return;   // 只鏡射日文已introduce的字（新字由日文模式引入）
       const active = ((st.phase === 'learning' || st.phase === 'relearning') && st.due <= ahead)
@@ -1888,7 +1912,7 @@ async function exportNote(L) {
     }
     const c = queue[cur];
     const im = imgOf(c);
-    const jp = getMode() === 'jp';
+    const md = getMode(), jp = md === 'jp';
     const divider = '<div style="width:60%;height:1px;background:var(--line);margin:6px 0"></div>';
     const imgTag = (im && im.url ? '<img class="anki-img" loading="lazy" src="' + esc(im.url) + '" alt="">' : '');
     const exBlock = (c.example ? '<div class="anki-ex">' + rubyA(c.example) + '<button class="anki-ex-say" id="aExSay" type="button">🔊</button></div>' : '') +
@@ -1898,8 +1922,19 @@ async function exportNote(L) {
         (im ? '<button class="anki-imgbtn" id="aImgDel" type="button">🗑 移除圖片</button>' : '') +
       '</div>' +
       (im && im.source ? '<div class="anki-imgcredit"><a href="' + esc(im.source) + '" target="_blank" rel="noopener">圖片來源' + (im.license ? '（' + esc(im.license) + '）' : '') + '</a></div>' : '');
-    let h = '<div class="anki-card"><div class="anki-lv">' + esc(c.level || '?') + '</div>';
-    if (jp) {
+    let h = '<div class="anki-card">'
+      // 聽力模式的正面連級別都不能出現——那也是線索（看到 N5 就知道是簡單的字）
+      + (md === 'listen' && !flipped ? '' : '<div class="anki-lv">' + esc(c.level || '?') + '</div>');
+    if (md === 'listen') {
+      // 聽力模式：正面只有一顆播放鍵，沒有任何文字；翻開才給日文與中文
+      h += '<button class="anki-listen" id="aListen" type="button">🔊</button>'
+        + (flipped ? '' : '<div class="anki-listenhint">聽聽看這是哪個字</div>');
+      if (flipped) {
+        h += divider + imgTag + '<div class="anki-word">' + esc(plainA(c.word)) + '</div>' +
+          '<div class="anki-reading">' + esc(c.reading) + '</div>' + posTag(c) + divider +
+          '<div class="anki-zh">' + esc(c.zh) + '</div>' + exBlock + imgManage;
+      }
+    } else if (jp) {
       // 日文模式：正面 日文單字（＋圖在上方）；翻開 讀音／中文／例句
       h += imgTag + '<div class="anki-word">' + esc(plainA(c.word)) + '</div><button class="anki-say" id="aSay" type="button">🔊</button>';
       if (flipped) {
@@ -1918,7 +1953,7 @@ async function exportNote(L) {
     }
     h += '</div>';
     if (flipped) {
-      const sub = (r) => jp ? ('<div class="anki-sub">' + preview(c, r) + '</div>') : '';   // 中文模式不排程→不顯示間隔
+      const sub = (r) => jp ? ('<div class="anki-sub">' + preview(c, r) + '</div>') : '';   // 中文／聽力不排程→不顯示間隔
       h += '<div class="anki-actions four">' +
         '<button class="a-again" data-r="again">再來' + sub('again') + '</button>' +
         '<button class="a-hard" data-r="hard">困難' + sub('hard') + '</button>' +
@@ -1929,14 +1964,27 @@ async function exportNote(L) {
     }
     body.innerHTML = h;
     const sy = panel.querySelector('#aSay'); if (sy) sy.onclick = () => speech.speak(c.reading, null, vocabSpeed.get());
+    const ls = panel.querySelector('#aListen');
+    if (ls) {
+      ls.onclick = () => speech.speak(c.reading, null, vocabSpeed.get());
+      // 正面自動播一次。手機瀏覽器可能擋掉「沒有使用者動作就發出的聲音」，
+      // 第一張要自己點一下；點過之後同一個分頁就不再被擋。
+      if (!flipped) setTimeout(() => { try { speech.speak(c.reading, null, vocabSpeed.get()); } catch (e) {} }, 120);
+    }
     const ex = panel.querySelector('#aExSay'); if (ex) ex.onclick = () => speech.speak(kanaOf(c.example), null, vocabSpeed.get());
     const sw = panel.querySelector('#ankiShow'); if (sw) sw.onclick = () => { flipped = true; render(); };
     const ib = panel.querySelector('#aImg'); if (ib) ib.onclick = () => openImgSearch(c);
     const idel = panel.querySelector('#aImgDel'); if (idel) idel.onclick = () => { const m = loadImgs(); delete m[keyOf(c)]; saveImgs(m); render(); };
     panel.querySelectorAll('.anki-actions [data-r]').forEach(b => b.onclick = () => {
-      if (getMode() === 'zh') {                       // 中文模式：只記完成、不動排程（日文才是排程主）
+      const md2 = getMode();
+      if (md2 === 'zh' || md2 === 'listen') {          // 鏡像模式：只記完成、不動排程（日文才是排程主）
         if (b.dataset.r === 'again') { queue.splice(cur, 1); queue.push(c); }   // 再來＝本輪稍後再看一次
-        else { const d = loadZhDone(); if (d.keys.indexOf(keyOf(c)) === -1) d.keys.push(keyOf(c)); saveZhDone(d); queue.splice(cur, 1); }
+        else {
+          const d = (md2 === 'listen') ? loadListenDone() : loadZhDone();
+          if (d.keys.indexOf(keyOf(c)) === -1) d.keys.push(keyOf(c));
+          (md2 === 'listen' ? saveListenDone : saveZhDone)(d);
+          queue.splice(cur, 1);
+        }
         if (cur >= queue.length) cur = 0;
         flipped = false; render(); return;
       }
@@ -1999,11 +2047,18 @@ async function exportNote(L) {
   function renderModeBar() {
     const bar = panel.querySelector('.anki-modebar'); if (!bar) return;
     const m = getMode();
+    // 聽力模式完全靠瀏覽器的日文語音。沒有語音的話正面會是一張按了也沒聲音的空白卡，
+    // 所以直接停用並寫明原因，不要讓人按下去得到一片安靜。
+    const canListen = speech.supported && speech.hasVoice();
     bar.innerHTML = '<span class="anki-lvlabel">方向</span>' +
       '<button type="button" class="anki-modechip' + (m === 'jp' ? ' on' : '') + '" data-m="jp">日文→中文</button>' +
-      '<button type="button" class="anki-modechip' + (m === 'zh' ? ' on' : '') + '" data-m="zh">中文→日文</button>';
+      '<button type="button" class="anki-modechip' + (m === 'zh' ? ' on' : '') + '" data-m="zh">中文→日文</button>' +
+      '<button type="button" class="anki-modechip' + (m === 'listen' ? ' on' : '') + '" data-m="listen"'
+        + (canListen ? '' : ' disabled title="這台裝置沒有日文語音，聽力模式用不了"') + '>🔊 聽力</button>'
+      + (canListen ? '' : '<div class="anki-modenote">這台裝置沒有日文語音，聽力模式用不了。</div>');
     bar.querySelectorAll('.anki-modechip').forEach(b => b.onclick = () => {
       const nm = b.getAttribute('data-m'); if (nm === getMode()) return;
+      speech.stop();   // 切走時把還在念的停掉
       setMode(nm); renderModeBar(); buildQueue(); cur = 0; flipped = false; render();
     });
   }
