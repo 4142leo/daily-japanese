@@ -1696,6 +1696,18 @@ async function exportNote(L) {
   };
   const saveNewPer = (v) => { try { localStorage.setItem(NPKEY, String(v)); } catch (e) {} };
   let queueNewPer = NEW_PER_DAY_DEFAULT;   // 目前這一輪佇列實際用的額度（可能跟設定不同）
+  // 聽力每日張數可調（Leo 2026-10-29），預設 200。跟上面兩個設定同一套規則：
+  // 改了不立刻生效，等下次進測驗畫面才套用。
+  const LPKEY = 'dj_anki_listenper';
+  const LISTEN_PER_DAY_DEFAULT = 200;
+  const LISTEN_STEPS = [50, 100, 150, 200, 300, 500];
+  const loadListenPer = () => {
+    let v = NaN;
+    try { v = parseInt(localStorage.getItem(LPKEY), 10); } catch (e) {}
+    return (isFinite(v) && v > 0) ? v : LISTEN_PER_DAY_DEFAULT;
+  };
+  const saveListenPer = (v) => { try { localStorage.setItem(LPKEY, String(v)); } catch (e) {} };
+  let queueListenPer = LISTEN_PER_DAY_DEFAULT;   // 這一輪佇列實際用的張數
   const LEARN_STEPS = [1, 10], GRAD_IV = 1, EASY_IV = 4, RELEARN_STEP = 10;
   const START_EASE = 2.5, EASE_MIN = 1.3, HARD_MULT = 1.2, EASY_BONUS = 1.3, LAPSE_MULT = 0.1, MAX_IV = 36500;
   const keyOf = (c) => c.word + '|' + c.reading;
@@ -1787,8 +1799,29 @@ async function exportNote(L) {
   function saveZhDone(o) { try { localStorage.setItem(ZDKEY, JSON.stringify(o)); } catch (e) {} }
 
   // 聽力模式按了「再來」「困難」之後，隔幾張再出一次。
-  // 不用「排到最後面」是因為聽力佇列是學過的全部（目前 500 張起跳），排到最後＝今天不會再看到。
+  // 不用「排到最後面」是因為排到當天那批的最後＝今天多半不會再看到，等於還是消失了。
   const LISTEN_GAP = { again: 3, hard: 8 };
+
+  // 聽力按「簡單」＝這個字以後不用再聽了，從聽力永久移除（不按日重置）。
+  // **只影響聽力**：`dj_anki` 一行都不動，日文模式照樣排它、中文模式照樣出現。
+  // 存成 { cleared, map:{ key: 加進來的時間 } } 而不是一個陣列：雲端合併時取聯集，
+  // 但「全部放回來」之前加的一律丟掉——只存陣列的話，另一台同步回來會把清掉的又加回去。
+  const LSKKEY = 'dj_anki_listen_skip';
+  function loadListenSkip() {
+    let o = {}; try { o = JSON.parse(localStorage.getItem(LSKKEY) || '{}'); } catch (e) {}
+    return { cleared: +o.cleared || 0, map: (o.map && typeof o.map === 'object') ? o.map : {} };
+  }
+  function saveListenSkip(o) { try { localStorage.setItem(LSKKEY, JSON.stringify(o)); } catch (e) {} }
+
+  // 當天抽樣用的排序值（FNV-1a）：同一個字在同一天一定算出同一個數字，
+  // 所以進出畫面不會換一批、換日自動換一批，而且手機跟電腦算出來一樣——
+  // 不必把「今天抽到哪 200 張」存起來同步，也就少一條合併規則要維護。
+  function dayHash(k) {
+    const s = k + '|' + todayStr();
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) { h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0; }
+    return h;
+  }
   // 單字配圖：只存「word|reading → {url,source,license,by}」對照表（dj_ 前綴→自動雲端同步；圖本體存 Supabase 圖床）
   const IMGKEY = 'dj_vocab_img';
   const loadImgs = () => { try { return JSON.parse(localStorage.getItem(IMGKEY) || '{}'); } catch (e) { return {}; } };
@@ -1847,24 +1880,40 @@ async function exportNote(L) {
     sh(revUse); sh(fresh);
     queue = learn.concat(revUse).concat(fresh.slice(0, newBudget));
   }
-  // 中文模式：鏡射「當日日文模式的字」（今天到期的複習＋今天在日文模式碰過的字，含新學），反向再練一次；扣掉今天中文已完成的
   /**
    * 鏡像佇列：中文模式與聽力模式共用。
-   * 兩者都只是把「今天在日文模式碰到的那批字」換個方式再練一次，
-   * 不引入新字、不動排程——日文模式才是排程主。
-   * `done` 各自獨立（dj_anki_zh_done / dj_anki_listen_done），所以兩邊的進度互不干擾。
+   * 兩者都只是把「日文模式學過的字」換個方式再練一次，不引入新字、不動排程、
+   * 不看到期日——日文模式才是排程主。`done` 各自獨立
+   * （dj_anki_zh_done / dj_anki_listen_done），兩邊的進度互不干擾。
+   *
+   * 兩者的張數規則不同（Leo 2026-10-29 定案，只改聽力）：
+   *   聽力：每天從學過的字裡抽 queueListenPer 張，並扣掉按過「簡單」的。
+   *   中文：學過的全部都收，沒有上限。
    */
   function buildQueueMirror(md) {
     state = load(); daily = loadDaily();
-    const done = (md === 'listen' ? loadListenDone() : loadZhDone()).keys, out = [];
+    const done = (md === 'listen' ? loadListenDone() : loadZhDone()).keys;
+    const skip = (md === 'listen') ? loadListenSkip().map : {};
+    const td = dayStart(Date.now());
+    let pool = [];
     VOCAB_DECK.forEach(c => {
-      // 只收日文模式已經 introduce 過的字（新字一律由日文模式引入）。
-      // **學過的全部都收，不看到期日、也不套複習上限**（Leo 2026-10-29 定案）：
-      // 這兩個模式不是主要複習，不影響排程，所以沒有「今天該做幾張」的概念——
-      // 佇列長度只是「可以練的有幾張」，想練多少練多少，不做完也沒有代價。
-      const st = state[keyOf(c)]; if (!st) return;
-      if (done.indexOf(keyOf(c)) === -1) out.push(c);
+      const k = keyOf(c);
+      if (!state[k]) return;            // 只收日文模式已經 introduce 過的字
+      // 聽力按過「簡單」的不再出現。**今天才按掉的先留在池子裡佔位**，最後才從當天那批
+      // 濾掉（見下面的 out）：現在就拿掉的話池子少一個，當天那批的第 201 名會遞補進來，
+      // 按「簡單」反而多一張要聽。隔天起它就真的不在池子裡了。
+      if (skip[k] && skip[k] < td) return;
+      pool.push(c);
     });
+    if (md === 'listen') {
+      // 學過的全收會滾到一千多張，每天都做不完＝每天都在欠債，光看到那個數字就不想打開。
+      // **先抽當天那一批、再扣掉已完成的**：順序反過來的話，做掉一張就補一張新的進來，
+      // 佇列永遠停在 200，一樣做不完。
+      queueListenPer = loadListenPer();
+      pool.sort((a, b) => dayHash(keyOf(a)) - dayHash(keyOf(b)));
+      pool = pool.slice(0, queueListenPer);
+    }
+    const out = pool.filter(c => done.indexOf(keyOf(c)) === -1 && !skip[keyOf(c)]);
     sh(out);
     queue = out;
   }
@@ -2023,6 +2072,13 @@ async function exportNote(L) {
         if (gap) {
           queue.splice(cur, 1);
           queue.splice(Math.min(queue.length, cur + gap), 0, c);
+        } else if (md2 === 'listen' && r === 'easy') {
+          // 聽力的「簡單」＝這個字以後不用再聽了，永久移除（Leo 2026-10-29 定案）。
+          // 只從聽力移除：日文模式照樣排它複習，中文模式也照樣出現。
+          const sk = loadListenSkip();
+          sk.map[keyOf(c)] = Date.now();
+          saveListenSkip(sk);
+          queue.splice(cur, 1);
         } else {
           const d = (md2 === 'listen') ? loadListenDone() : loadZhDone();
           if (d.keys.indexOf(keyOf(c)) === -1) d.keys.push(keyOf(c));
@@ -2067,6 +2123,28 @@ async function exportNote(L) {
           + (load10 > loadRevPer() ? '（超過你設的每日複習上限 ' + revLabel(loadRevPer()) + '）' : '') + '。')
       + (pending ? '<br><b>這一輪還是用 ' + queueNewPer + '，離開測驗畫面再進來才換成 ' + sel + '。</b>' : '')
       + '</div></div></div>';
+  }
+
+  /**
+   * 聽力設定：每日張數 ＋ 已永久移除的字（Leo 2026-10-29 指定放在學習數據裡）。
+   */
+  function listenCardHtml() {
+    const sel = loadListenPer();
+    const pending = (getMode() === 'listen') && sel !== queueListenPer;
+    const n = Object.keys(loadListenSkip().map).length;
+    return '<div class="st-sec"><div class="st-h">🔊 聽力</div><div class="st-card">'
+      + '<div class="st-chips">'
+      + LISTEN_STEPS.map(v => '<button type="button" class="anki-lvchip' + (v === sel ? ' on' : '')
+        + '" data-lp="' + v + '">' + v + '</button>').join('')
+      + '</div>'
+      + '<div class="st-note' + (pending ? ' pending' : '') + '">'
+      + '每天從學過的字裡抽 ' + sel + ' 張來聽，每天換一批。聽力不排程、不影響進度，做不完沒有代價。'
+      + '按「簡單」＝這個字以後不用再聽，會從聽力移除（日文模式照樣排它複習，中文模式也照舊）。'
+      + (pending ? '<br><b>這一輪還是用 ' + queueListenPer + ' 張，離開測驗畫面再進來才換成 ' + sel + ' 張。</b>' : '')
+      + '</div>'
+      + '<div class="st-row" style="margin-top:8px"><span>已從聽力移除</span><b>' + n + ' 個字</b></div>'
+      + (n ? '<div class="st-chips"><button type="button" class="anki-lvchip" id="stListenReset">全部放回來</button></div>' : '')
+      + '</div></div>';
   }
 
   function renderLevelBar() {
@@ -2405,6 +2483,7 @@ async function exportNote(L) {
 
     h += newPerCardHtml();
     h += revPerCardHtml();
+    h += listenCardHtml();
 
     h += '<div class="st-sec"><div class="st-h">各級進度</div><div class="st-card">';
     lvs.forEach(lv => {
@@ -2483,7 +2562,18 @@ async function exportNote(L) {
     });
     stPanel.querySelectorAll('[data-rp]').forEach(b2 => {
       b2.onclick = () => { saveRevPer(+b2.getAttribute('data-rp')); renderStats(); };
-    });   // 只重畫這個畫面：刻意不重建佇列，免得背到一半卡片突然變動
+    });
+    stPanel.querySelectorAll('[data-lp]').forEach(b2 => {
+      b2.onclick = () => { saveListenPer(+b2.getAttribute('data-lp')); renderStats(); };
+    });
+    const lrs = stPanel.querySelector('#stListenReset');
+    if (lrs) lrs.onclick = () => {
+      const n = Object.keys(loadListenSkip().map).length;
+      if (!confirm('把移除掉的 ' + n + ' 個字全部放回聽力？')) return;
+      // cleared 一定要留著：別台裝置同步回來時，靠它把這個時間之前加的排除一起丟掉。
+      saveListenSkip({ cleared: Date.now(), map: {} });
+      renderStats();
+    };   // 只重畫這個畫面：刻意不重建佇列，免得背到一半卡片突然變動
   }
 
   function openStats() { renderStats(); stPanel.classList.add('show'); }
@@ -2532,7 +2622,17 @@ async function exportNote(L) {
     if (L.date !== R.date) return JSON.stringify(dayNum(R.date) > dayNum(L.date) ? R : L);
     return JSON.stringify({ date: L.date, newCount: Math.max(+L.newCount || 0, +R.newCount || 0) });
   }
-  function mergeZhDone(a, b) {           // 中文模式當天已完成：同一天取聯集
+  function mergeListenSkip(a, b) {       // 聽力永久移除清單：取聯集，但「全部放回來」之前加的一律丟掉
+    const L = parseObj(a), R = parseObj(b);
+    const cleared = Math.max(+L.cleared || 0, +R.cleared || 0);
+    const map = {};
+    [L.map || {}, R.map || {}].forEach(m => Object.keys(m).forEach(k => {
+      const t = +m[k] || 0;
+      if (t > cleared && t > (map[k] || 0)) map[k] = t;
+    }));
+    return JSON.stringify({ cleared: cleared, map: map });
+  }
+  function mergeZhDone(a, b) {           // 當天已完成（中文／聽力共用）：同一天取聯集
     const L = parseObj(a), R = parseObj(b);
     if (L.date !== R.date) return JSON.stringify(dayNum(R.date) > dayNum(L.date) ? R : L);
     const seen = {}; (L.keys || []).concat(R.keys || []).forEach(k => { seen[k] = 1; });
@@ -2609,6 +2709,8 @@ async function exportNote(L) {
       if (k === 'dj_anki' || k === 'dj_anki_zh') { out[k] = mergeCardMap(a, b); return; }
       if (k === 'dj_anki_daily') { out[k] = mergeDaily(a, b); return; }
       if (k === 'dj_anki_zh_done') { out[k] = mergeZhDone(a, b); return; }
+      if (k === 'dj_anki_listen_done') { out[k] = mergeZhDone(a, b); return; }   // 同款資料（date+keys），原本漏了這條→兩台同一天會整包互相覆蓋
+      if (k === 'dj_anki_listen_skip') { out[k] = mergeListenSkip(a, b); return; }
       if (k === 'dj_vocab_img') { out[k] = JSON.stringify(Object.assign({}, parseObj(b), parseObj(a))); return; }
       if (k === 'dj_gram_wrong') { out[k] = mergeWrongBook(a, b); return; }
       if (k === 'dj_gram_rounds') { out[k] = mergeRounds(a, b); return; }
