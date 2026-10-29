@@ -1785,6 +1785,10 @@ async function exportNote(L) {
 
   function loadZhDone() { let o = {}; try { o = JSON.parse(localStorage.getItem(ZDKEY) || '{}'); } catch (e) {} if (o.date !== todayStr()) o = { date: todayStr(), keys: [] }; return o; }
   function saveZhDone(o) { try { localStorage.setItem(ZDKEY, JSON.stringify(o)); } catch (e) {} }
+
+  // 聽力模式按了「再來」「困難」之後，隔幾張再出一次。
+  // 不用「排到最後面」是因為聽力佇列是學過的全部（目前 500 張起跳），排到最後＝今天不會再看到。
+  const LISTEN_GAP = { again: 3, hard: 8 };
   // 單字配圖：只存「word|reading → {url,source,license,by}」對照表（dj_ 前綴→自動雲端同步；圖本體存 Supabase 圖床）
   const IMGKEY = 'dj_vocab_img';
   const loadImgs = () => { try { return JSON.parse(localStorage.getItem(IMGKEY) || '{}'); } catch (e) { return {}; } };
@@ -2009,8 +2013,17 @@ async function exportNote(L) {
     panel.querySelectorAll('.anki-actions [data-r]').forEach(b => b.onclick = () => {
       const md2 = getMode();
       if (md2 === 'zh' || md2 === 'listen') {          // 鏡像模式：只記完成、不動排程（日文才是排程主）
-        if (b.dataset.r === 'again') { queue.splice(cur, 1); queue.push(c); }   // 再來＝本輪稍後再看一次
-        else {
+        const r = b.dataset.r;
+        // gap > 0 ＝這張不算今天做完，插回佇列第 gap 張之後。
+        // 聽力的「困難」原本跟普通、簡單歸同一類，按下去今天就不再出現——可是聽的當下
+        // 沒抓到的字，正是最需要再聽一次的，所以改成跟「再來」同一類（Leo 2026-10-29 定案）。
+        // 中文模式維持原樣：只有「再來」不算做完，而且排到最後面。
+        const gap = (md2 === 'listen') ? (LISTEN_GAP[r] || 0)
+                                       : (r === 'again' ? queue.length : 0);
+        if (gap) {
+          queue.splice(cur, 1);
+          queue.splice(Math.min(queue.length, cur + gap), 0, c);
+        } else {
           const d = (md2 === 'listen') ? loadListenDone() : loadZhDone();
           if (d.keys.indexOf(keyOf(c)) === -1) d.keys.push(keyOf(c));
           (md2 === 'listen' ? saveListenDone : saveZhDone)(d);
