@@ -1852,15 +1852,14 @@ async function exportNote(L) {
    */
   function buildQueueMirror(md) {
     state = load(); daily = loadDaily();
-    const now = Date.now(), ahead = now + 20 * MIN, td = todayStr();
-    const dayEnd = dayStart(now) + DAY;   // 明天 01:00＝今天的界線
     const done = (md === 'listen' ? loadListenDone() : loadZhDone()).keys, out = [];
     VOCAB_DECK.forEach(c => {
-      const st = state[keyOf(c)]; if (!st) return;   // 只鏡射日文已introduce的字（新字由日文模式引入）
-      const active = ((st.phase === 'learning' || st.phase === 'relearning') && st.due <= ahead)
-        || (st.phase === 'review' && st.due < dayEnd)
-        || st.seen === td;                            // 今天在日文模式碰過（新學/複習過）的字
-      if (active && done.indexOf(keyOf(c)) === -1) out.push(c);
+      // 只收日文模式已經 introduce 過的字（新字一律由日文模式引入）。
+      // **學過的全部都收，不看到期日、也不套複習上限**（Leo 2026-10-29 定案）：
+      // 這兩個模式不是主要複習，不影響排程，所以沒有「今天該做幾張」的概念——
+      // 佇列長度只是「可以練的有幾張」，想練多少練多少，不做完也沒有代價。
+      const st = state[keyOf(c)]; if (!st) return;
+      if (done.indexOf(keyOf(c)) === -1) out.push(c);
     });
     sh(out);
     queue = out;
@@ -1927,7 +1926,14 @@ async function exportNote(L) {
     return daily.newCount + '/' + queueNewPer;
   }
 
-  function count() { const el = panel.querySelector('.anki-count'); if (el) el.textContent = '剩 ' + queue.length + '（新字 ' + newCountLabel() + '）' + (revClipped ? '　還有 ' + revClipped + ' 張明天排' : ''); }
+  function count() {
+    const el = panel.querySelector('.anki-count'); if (el) {
+      // 「還有 N 張明天排」是日文模式的複習上限算出來的。鏡射模式沒有上限，
+      // 把它帶過去會變成「剩 300　還有 200 張明天排」這種自相矛盾的句子。
+      const clip = (getMode() === 'jp' && revClipped) ? '　還有 ' + revClipped + ' 張明天排' : '';
+      el.textContent = '剩 ' + queue.length + '（新字 ' + newCountLabel() + '）' + clip;
+    }
+  }
   function render() {
     const body = panel.querySelector('.anki-body');
     if (!queue.length) { buildQueue(); cur = 0; }   // 清完後重建一次（撿還沒進佇列的到期/新卡）
